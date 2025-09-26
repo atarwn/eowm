@@ -11,11 +11,12 @@ Keybinds
 
 
  * Mod + j/k -> next/prev window
+ * Mod + Shift + j/k -> move down/up focused window in stack
  * Mod + h/l -> inc/dec master
  * Mod + Return (Enter) -> spawn alacritty
  * Mod + p -> spawn dmenu\_run
  * Mod + f -> fullscreen
- * Mod + Space -> toggle master
+ * Mod + Space -> toggle master with top stack
  * Mod + q -> kill window
  * Mod + c -> quit
  * Mouse hover -> focus

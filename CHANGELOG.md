@@ -1,6 +1,7 @@
 1.1 -> "Lowx"
 -------------------
  * Now you can move windows in stack
+ * Re-upload due to forgotten file update
 
 1.0 -> "Stabilize"
 ----------------
