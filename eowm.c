@@ -250,6 +250,15 @@ void focus(Client *c) {
 void arrange() {
     if (!clients) return;
     
+    // Handle fullscreen windows first (they get full screen regardless)
+    for (Client *c = clients; c; c = c->next) {
+        if (c->isfullscreen) {
+            resize(c, 0, 0, sw, sh);
+            XRaiseWindow(dpy, c->win); // Ensure fullscreen window is on top
+            return; // Only one fullscreen window should be visible
+        }
+    }
+    
     // Count non-fullscreen clients
     int n = 0;
     for (Client *c = clients; c; c = c->next) {
@@ -261,18 +270,7 @@ void arrange() {
     int mw = sw * master_size;  // Master width
     int th = sh / (n > 1 ? n - 1 : 1);  // Tile height
     
-    Client *master = NULL;
-    Client *stack = NULL;
-    int stack_count = 0;
-    
-    // Find master (first client) and stack clients
-    master = clients;
-    for (Client *c = clients->next; c; c = c->next) {
-        if (!c->isfullscreen) {
-            if (!stack) stack = c;
-            stack_count++;
-        }
-    }
+    Client *master = clients;
     
     // Arrange master
     if (master && !master->isfullscreen) {
@@ -281,21 +279,20 @@ void arrange() {
     
     // Arrange stack
     int i = 0;
-    for (Client *c = clients; c; c = c->next) {
-        if (c == master || c->isfullscreen) continue;
+    int stack_count = 0;
+    // Count stack clients first
+    for (Client *c = clients->next; c; c = c->next) {
+        if (!c->isfullscreen) stack_count++;
+    }
+    
+    for (Client *c = clients->next; c; c = c->next) {
+        if (c->isfullscreen) continue;
         
         int ty = i * th;
         int th_actual = (i == stack_count - 1) ? sh - ty : th;
         if (th_actual < MIN_WIDTH) th_actual = MIN_WIDTH;
         resize(c, 0, ty, sw - mw, th_actual);
         i++;
-    }
-    
-    // Handle fullscreen
-    for (Client *c = clients; c; c = c->next) {
-        if (c->isfullscreen) {
-            resize(c, 0, 0, sw, sh);
-        }
     }
 }
 
