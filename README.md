@@ -40,10 +40,6 @@ Why?!
 
 i can do whatever i want
 
-Known bugs
-----------
- * Exiting the console using Ctrl+D results in `(explicit kill or server shutdown).ourve id in failed request: 0xc00003 ...`
-
 Thanks to
 ---------
 
