@@ -17,6 +17,7 @@ struct Client {
     int isfullscreen;
     Client *next;
 };
+typedef void (*CmdFunc)(void);
 
 static Display *dpy;
 static Window root;
@@ -56,6 +57,8 @@ static void incmaster();
 static void decmaster();
 static void nextwin();
 static void prevwin();
+static void movewinup();
+static void movewindown();
 static void focusup();
 static void focusdown();
 static void focusleft();
@@ -68,19 +71,21 @@ static void spawn(const char *cmd);
 static struct {
     KeySym keysym;
     unsigned int mod;
-    void (*func)(const char*);
-    const char *arg;
+    CmdFunc func;          // All commands are void(*)(void)
+    const char *arg;       // If non-NULL, it's a spawn command
 } keys[] = {
-    { XK_j, MOD, (void(*)(const char*))nextwin, NULL },
-    { XK_k, MOD, (void(*)(const char*))prevwin, NULL },
-    { XK_h, MOD, (void(*)(const char*))incmaster, NULL },
-    { XK_l, MOD, (void(*)(const char*))decmaster, NULL },
-    { XK_Return, MOD, spawn, "alacritty" },
-    { XK_p, MOD, spawn, "dmenu_run" },
-    { XK_f, MOD, (void(*)(const char*))fullscreen, NULL },
-    { XK_space, MOD, (void(*)(const char*))togglemaster, NULL },
-    { XK_q, MOD, (void(*)(const char*))killclient, NULL },
-    { XK_c, MOD, (void(*)(const char*))quit, NULL }
+    { XK_j, MOD, (CmdFunc)nextwin, NULL },
+    { XK_k, MOD, (CmdFunc)prevwin, NULL },
+    { XK_j, MOD | ShiftMask, (CmdFunc)movewindown, NULL },
+    { XK_k, MOD | ShiftMask, (CmdFunc)movewinup, NULL },
+    { XK_h, MOD, (CmdFunc)incmaster, NULL },
+    { XK_l, MOD, (CmdFunc)decmaster, NULL },
+    { XK_Return, MOD, (CmdFunc)spawn, "alacritty" },
+    { XK_p, MOD, (CmdFunc)spawn, "dmenu_run" },
+    { XK_f, MOD, (CmdFunc)fullscreen, NULL },
+    { XK_space, MOD, (CmdFunc)togglemaster, NULL },
+    { XK_q, MOD, (CmdFunc)killclient, NULL },
+    { XK_c, MOD, (CmdFunc)quit, NULL }
 };
 
 static void sigchld_handler(int sig) {
@@ -225,14 +230,15 @@ void enternotify(XEvent *e) {
 
 void keypress(XEvent *e) {
     KeySym keysym = XLookupKeysym(&e->xkey, 0);
+    // Mask out irrelevant modifiers: CapsLock, NumLock, etc.
+    unsigned int state = e->xkey.state & ~(LockMask | Mod2Mask | Mod3Mask | Mod4Mask | Mod5Mask);
+
     for (int i = 0; i < sizeof(keys)/sizeof(keys[0]); i++) {
-        if (keysym == keys[i].keysym && 
-            (e->xkey.state & MOD) == keys[i].mod) {
-            if (keys[i].func) {
-                if (keys[i].arg)
-                    keys[i].func(keys[i].arg);
-                else
-                    ((void(*)(void))keys[i].func)();
+        if (keysym == keys[i].keysym && state == keys[i].mod) {
+            if (keys[i].arg) {
+                spawn(keys[i].arg);  // Explicit call for spawn
+            } else {
+                keys[i].func();      // All others are void(void)
             }
             break;
         }
@@ -278,13 +284,13 @@ void arrange() {
     }
     
     // Arrange stack
-    int i = 0;
     int stack_count = 0;
     // Count stack clients first
     for (Client *c = clients->next; c; c = c->next) {
         if (!c->isfullscreen) stack_count++;
     }
     
+    int i = 0;
     for (Client *c = clients->next; c; c = c->next) {
         if (c->isfullscreen) continue;
         
@@ -293,6 +299,10 @@ void arrange() {
         if (th_actual < MIN_WIDTH) th_actual = MIN_WIDTH;
         resize(c, 0, ty, sw - mw, th_actual);
         i++;
+    }
+
+    if (focused && !focused->isfullscreen) {
+        XRaiseWindow(dpy, focused->win);
     }
 }
 
@@ -361,6 +371,84 @@ void prevwin() {
         while (last && last->next) last = last->next;
         if (last) focus(last);
     }
+}
+
+// Returns number of stack clients filled into the 'stack' array (which must be pre-allocated)
+static int get_stack_clients(Client *stack[], int max) {
+    if (!clients) return 0;
+    int n = 0;
+    Client *c = clients->next; // stack starts after master
+    while (c && n < max) {
+        stack[n] = c;          // stack[n] is Client*, c is Client* → OK
+        n++;
+        c = c->next;
+    }
+    return n;
+}
+
+void movewinup() {
+    if (!focused || focused == clients || num_clients < 3) return;
+
+    Client *stack[256];
+    int n = get_stack_clients(stack, 256);
+    if (n < 2) return;
+
+    // Find focused in stack
+    int idx = -1;
+    for (int i = 0; i < n; i++) {
+        if (stack[i] == focused) {
+            idx = i;
+            break;
+        }
+    }
+    if (idx <= 0) return; // already at top of stack
+
+    // Swap with previous
+    Client *temp = stack[idx - 1];
+    stack[idx - 1] = stack[idx];
+    stack[idx] = temp;
+
+    // Re-link: master -> stack[0] -> stack[1] -> ... -> NULL
+    Client *current = clients; // start from master
+    for (int i = 0; i < n; i++) {
+        current->next = stack[i];
+        current = stack[i];
+    }
+    current->next = NULL;
+
+    arrange();
+}
+
+void movewindown() {
+    if (!focused || focused == clients || num_clients < 3) return;
+
+    Client *stack[256];
+    int n = get_stack_clients(stack, 256);
+    if (n < 2) return;
+
+    int idx = -1;
+    for (int i = 0; i < n; i++) {
+        if (stack[i] == focused) {
+            idx = i;
+            break;
+        }
+    }
+    if (idx == -1 || idx >= n - 1) return; // not found or already last
+
+    // Swap with next
+    Client *temp = stack[idx + 1];
+    stack[idx + 1] = stack[idx];
+    stack[idx] = temp;
+
+    // Re-link
+    Client *current = clients;
+    for (int i = 0; i < n; i++) {
+        current->next = stack[i];
+        current = stack[i];
+    }
+    current->next = NULL;
+
+    arrange();
 }
 
 void fullscreen() {
