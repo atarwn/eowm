@@ -31,6 +31,7 @@ static int num_clients = 0;
 static void buttonpress(XEvent *e);
 static void configurerequest(XEvent *e);
 static void maprequest(XEvent *e);
+static void unmapnotify(XEvent *e);
 static void destroynotify(XEvent *e);
 static void enternotify(XEvent *e);
 static void keypress(XEvent *e);
@@ -39,6 +40,7 @@ static void (*handlers[LASTEvent])(XEvent *) = {
     [ButtonPress] = buttonpress,
     [ConfigureRequest] = configurerequest,
     [MapRequest] = maprequest,
+    [UnmapNotify] = unmapnotify,
     [DestroyNotify] = destroynotify,
     [EnterNotify] = enternotify,
     [KeyPress] = keypress
@@ -86,9 +88,16 @@ static void sigchld_handler(int sig) {
     while (waitpid(-1, NULL, WNOHANG) > 0);
 }
 
+static int xerrorHandler(Display *dpy, XErrorEvent *ee) {
+    return 0; // Ignore for now
+}
+
 int main() {
     XEvent ev;
     if (!(dpy = XOpenDisplay(NULL))) exit(1);
+
+    // Set error handler early
+    XSetErrorHandler(xerrorHandler);
     
     // Handle child processes to prevent zombie processes
     signal(SIGCHLD, sigchld_handler);
@@ -162,6 +171,24 @@ void maprequest(XEvent *e) {
         EnterWindowMask | LeaveWindowMask | FocusChangeMask);
     XMapWindow(dpy, c->win);
     focus(c);
+    arrange();
+}
+
+void unmapnotify(XEvent *e) {
+    Client *c, **prev;
+    for (prev = &clients; (c = *prev); prev = &c->next) {
+        if (c->win == e->xunmap.window) {
+            *prev = c->next;
+            free(c);
+            num_clients--;
+            break;
+        }
+    }
+    if (!clients) focused = NULL;
+    else if (focused == c) {
+        if (clients) focus(clients);
+        else focused = NULL;
+    }
     arrange();
 }
 
