@@ -1,4 +1,8 @@
-1.0 -> Stabilize
+1.1 -> "Lowx"
+-------------------
+ * Now you can move windows in stack
+
+1.0 -> "Stabilize"
 ----------------
  * Fixed fullscreen mode with one window
  * Added simple error handling
