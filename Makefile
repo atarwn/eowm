@@ -1,12 +1,18 @@
-eowm:
-	cc eowm.c -o eowm -lX11
+TARGET = eowm
+CC ?= cc
+CFLAGS ?= -O2 -Wall
+PREFIX ?= /usr/local
 
-install: eowm
-	mkdir -p /usr/local/bin
-	install -m 755 eowm /usr/local/bin/eowm
+$(TARGET):
+	$(CC) $(CFLAGS) eowm.c -o $@ -lX11
 
-deinstall:
-	rm /usr/local/bin/eowm
+.PHONY: install uninstall clean
 
-clean: 
-	rm eowm
+install: $(TARGET)
+	install -Dm755 $(TARGET) $(DESTDIR)$(PREFIX)/bin/$(TARGET)
+
+uninstall:
+	rm -f $(DESTDIR)$(PREFIX)/bin/$(TARGET)
+
+clean:
+	rm -f $(TARGET)
