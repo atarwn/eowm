@@ -1,6 +1,7 @@
 eowm - eet owter winvow manader
 
-eowm
+`┏┓┏┓┓┏┏┏┳┓`  
+`┗ ┗┛┗┻┛┛┗┗`
 ----
 
 This is a simple window manager, ispired by catwm and ratpoison.  
