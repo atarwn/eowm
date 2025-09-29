@@ -59,10 +59,6 @@ static void nextwin();
 static void prevwin();
 static void movewinup();
 static void movewindown();
-static void focusup();
-static void focusdown();
-static void focusleft();
-static void focusright();
 static void fullscreen();
 static void quit();
 static void spawn(const char *cmd);
@@ -179,41 +175,30 @@ void maprequest(XEvent *e) {
     arrange();
 }
 
-void unmapnotify(XEvent *e) {
+static void removeclient(Window win) {
     Client *c, **prev;
     for (prev = &clients; (c = *prev); prev = &c->next) {
-        if (c->win == e->xunmap.window) {
+        if (c->win == win) {
             *prev = c->next;
             free(c);
             num_clients--;
             break;
         }
     }
-    if (!clients) focused = NULL;
-    else if (focused == c) {
-        if (clients) focus(clients);
-        else focused = NULL;
+    if (!clients) {
+        focused = NULL;
+    } else if (focused == c) {
+        focus(clients); // clients guaranteed non-NULL here
     }
     arrange();
 }
 
+void unmapnotify(XEvent *e) {
+    removeclient(e->xunmap.window);
+}
+
 void destroynotify(XEvent *e) {
-    Client *c, **prev;
-    for (prev = &clients; (c = *prev); prev = &c->next) {
-        if (c->win == e->xdestroywindow.window) {
-            *prev = c->next;
-            free(c);
-            num_clients--;
-            break;
-        }
-    }
-    if (!clients) focused = NULL;
-    else if (focused == c) {
-        // Focus next available client
-        if (clients) focus(clients);
-        else focused = NULL;
-    }
-    arrange();
+    removeclient(e->xdestroywindow.window);
 }
 
 void enternotify(XEvent *e) {
@@ -356,20 +341,21 @@ void nextwin() {
 }
 
 void prevwin() {
-    if (!focused) return;
+    if (!focused || !clients) return;
+
     Client *prev = NULL;
+    Client *last = clients;
     for (Client *c = clients; c; c = c->next) {
         if (c->next == focused) {
             prev = c;
-            break;
         }
+        if (c->next) last = c->next;
     }
-    if (prev) focus(prev);
-    else {
-        // Find last client
-        Client *last = clients;
-        while (last && last->next) last = last->next;
-        if (last) focus(last);
+
+    if (prev) {
+        focus(prev);
+    } else {
+        focus(last); // wrap to last
     }
 }
 
@@ -386,40 +372,7 @@ static int get_stack_clients(Client *stack[], int max) {
     return n;
 }
 
-void movewinup() {
-    if (!focused || focused == clients || num_clients < 3) return;
-
-    Client *stack[256];
-    int n = get_stack_clients(stack, 256);
-    if (n < 2) return;
-
-    // Find focused in stack
-    int idx = -1;
-    for (int i = 0; i < n; i++) {
-        if (stack[i] == focused) {
-            idx = i;
-            break;
-        }
-    }
-    if (idx <= 0) return; // already at top of stack
-
-    // Swap with previous
-    Client *temp = stack[idx - 1];
-    stack[idx - 1] = stack[idx];
-    stack[idx] = temp;
-
-    // Re-link: master -> stack[0] -> stack[1] -> ... -> NULL
-    Client *current = clients; // start from master
-    for (int i = 0; i < n; i++) {
-        current->next = stack[i];
-        current = stack[i];
-    }
-    current->next = NULL;
-
-    arrange();
-}
-
-void movewindown() {
+static void move_in_stack(int delta) {
     if (!focused || focused == clients || num_clients < 3) return;
 
     Client *stack[256];
@@ -433,11 +386,14 @@ void movewindown() {
             break;
         }
     }
-    if (idx == -1 || idx >= n - 1) return; // not found or already last
+    if (idx == -1) return;
 
-    // Swap with next
-    Client *temp = stack[idx + 1];
-    stack[idx + 1] = stack[idx];
+    int new_idx = idx + delta;
+    if (new_idx < 0 || new_idx >= n) return;
+
+    // Swap
+    Client *temp = stack[new_idx];
+    stack[new_idx] = stack[idx];
     stack[idx] = temp;
 
     // Re-link
@@ -450,6 +406,9 @@ void movewindown() {
 
     arrange();
 }
+
+void movewinup()    { move_in_stack(-1); }
+void movewindown()  { move_in_stack(+1); }
 
 void fullscreen() {
     if (!focused) return;
