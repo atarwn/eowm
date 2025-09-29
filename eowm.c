@@ -215,8 +215,8 @@ void enternotify(XEvent *e) {
 
 void keypress(XEvent *e) {
     KeySym keysym = XLookupKeysym(&e->xkey, 0);
-    // Mask out irrelevant modifiers: CapsLock, NumLock, etc.
-    unsigned int state = e->xkey.state & ~(LockMask | Mod2Mask | Mod3Mask | Mod4Mask | Mod5Mask);
+    // Mask out irrelevant modifiers: CapsLock & NumLock.
+    unsigned int state = e->xkey.state & ~(LockMask | Mod2Mask);
 
     for (int i = 0; i < sizeof(keys)/sizeof(keys[0]); i++) {
         if (keysym == keys[i].keysym && state == keys[i].mod) {
