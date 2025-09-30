@@ -103,7 +103,6 @@ static struct {
     { XK_f, MOD, (CmdFunc)fullscreen, NULL },
     { XK_q, MOD, (CmdFunc)killclient, NULL },
     { XK_c, MOD, (CmdFunc)quit, NULL },
-
     { XK_j, MOD | ShiftMask, (CmdFunc)movewindown, NULL },
     { XK_k, MOD | ShiftMask, (CmdFunc)movewinup, NULL },
 
@@ -112,6 +111,7 @@ static struct {
     { XK_l, MOD, (CmdFunc)decmaster, NULL },
     { XK_space, MOD, (CmdFunc)togglemaster, NULL },
 
+    // Applications
     { XK_Return, MOD, (CmdFunc)spawn, "alacritty" },
     { XK_p, MOD, (CmdFunc)spawn, "dmenu_run" },
 
