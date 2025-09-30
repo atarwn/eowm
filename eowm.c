@@ -454,6 +454,7 @@ static void move_in_stack(int delta) {
     current->next = NULL;
 
     arrange();
+    focus(focused);
 }
 
 void movewinup()    { move_in_stack(-1); }
