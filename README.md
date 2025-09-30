@@ -1,26 +1,29 @@
-eowm - eet owter winvow manader
-
-`┏┓┏┓┓┏┏┏┳┓`  
+`┏┓┏┓┓┏┏┏┳┓` 
 `┗ ┗┛┗┻┛┛┗┗`
-----
+============
 
 This is a simple window manager, ispired by catwm and ratpoison.  
 Might be used for learning purporses
 
+
 Keybinds
 -------
 
+|      Keybind      | Action |
+|-------------------|--------|
+| Mod + j/k         | next/prev window |
+| Mod + f           | fullscreen |
+| Mod + q           | kill window |
+| Mod + c           | quit |
+| Mod + Shift + j/k | move down/up focused window in stack |
+| Mod + h/l         | inc/dec master |
+| Mod + Space       | toggle master with top stack |
+| Mod + Return      | spawn alacritty |
+| Mod + p           | spawn dmenu\_run |
+| Mod + 1-9         | Switch workspaces |
+| Mod + Shift + 1-9 | Switch window between workspaces |
+| Mouse hover       | focus |
 
- * Mod + j/k -> next/prev window
- * Mod + Shift + j/k -> move down/up focused window in stack
- * Mod + h/l -> inc/dec master
- * Mod + Return (Enter) -> spawn alacritty
- * Mod + p -> spawn dmenu\_run
- * Mod + f -> fullscreen
- * Mod + Space -> toggle master with top stack
- * Mod + q -> kill window
- * Mod + c -> quit
- * Mouse hover -> focus
 
 Layout
 ------
@@ -37,13 +40,27 @@ Layout
 
 No borders, no UI, new window pushes master to the top of the stack
 
+
+Naming
+------
+
+it was vewy hard:
+ * catwm - already exists
+ * kittywm - stupid
+ * meowm - two m's
+ * eowm - hmm, ok
+
+And you also stumbled upon the expanded form of the name, which I spent one brain cell on
+
+
 Why?!
 -----
 
-i can do whatever i want
+fredom
+
 
 Thanks to
----------
+=========
 
  * 2bwm
  * catwm
