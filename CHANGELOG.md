@@ -1,3 +1,7 @@
+1.2 -> "Transcend"
+------------------
+ * Workspaces!
+
 1.1.1 -> "Asketa"
 -----------------
  * Code refactoring, no changes for user
