@@ -4,7 +4,7 @@ CFLAGS ?= -O2 -Wall
 PREFIX ?= /usr/local
 
 $(TARGET):
-	$(CC) $(CFLAGS) eowm.c -o $@ -lX11
+	$(CC) $(CFLAGS) eowm.c -o $@ -lX11 -lXft -I/usr/include/freetype2/
 
 .PHONY: install uninstall clean
 
