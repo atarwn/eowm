@@ -2,7 +2,7 @@
 `┗ ┗┛┗┻┛┛┗┗`
 ============
 
-This is a simple window manager, ispired by catwm and ratpoison.  
+This is a simple window manager, inspired by catwm and ratpoison.  
 Might be used for learning purporses
 
 
@@ -44,7 +44,7 @@ No borders, no UI, new window pushes master to the top of the stack
 Naming
 ------
 
-it was vewy hard:
+it was very hard:
  * catwm - already exists
  * kittywm - stupid
  * meowm - two m's
@@ -56,10 +56,10 @@ And you also stumbled upon the expanded form of the name, which I spent one brai
 Why?!
 -----
 
-fredom
+**Freedom**
 
 
-Thanks to
+Thanks to:
 =========
 
  * 2bwm
