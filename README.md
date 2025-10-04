@@ -2,7 +2,7 @@
 `┗ ┗┛┗┻┛┛┗┗`
 ============
 
-This is a simple window manager, ispired by catwm and ratpoison.  
+This is a simple window manager, inspired by catwm and ratpoison.  
 Might be used for learning purporses
 
 
@@ -56,11 +56,11 @@ And you also stumbled upon the expanded form of the name, which I spent one brai
 Why?!
 -----
 
-fredom
+**_fredom_**
 
 
-Thanks to
-=========
+Thanks to:
+==========
 
  * 2bwm
  * catwm
