@@ -44,7 +44,7 @@ No borders, no UI, new window pushes master to the top of the stack
 Naming
 ------
 
-it was very hard:
+it was vewy hard:
  * catwm - already exists
  * kittywm - stupid
  * meowm - two m's
@@ -56,11 +56,11 @@ And you also stumbled upon the expanded form of the name, which I spent one brai
 Why?!
 -----
 
-**Freedom**
+**_fredom_**
 
 
 Thanks to:
-=========
+==========
 
  * 2bwm
  * catwm
