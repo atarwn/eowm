@@ -9,6 +9,8 @@
 #define MOD Mod1Mask
 #define MASTER_SIZE 0.6
 #define MIN_WIDTH 100
+#define PADDING 10
+#define BORDER_WIDTH 2
 
 typedef struct Client Client;
 struct Client {
@@ -30,6 +32,7 @@ static double master_size = MASTER_SIZE;
 static int num_clients = 0;
 static Client *workspaces[9] = {NULL}; // 9 workspaces
 static int current_ws = 0;
+static unsigned long border_normal, border_focused;
 
 // Event handlers
 static void buttonpress(XEvent *e);
@@ -73,14 +76,8 @@ static void spawn(const char *cmd);
     static void ws##n() { switchws((n)-1); } \
     static void movews##n() { movewin_to_ws((n)-1); }
 
-WS_FUNC(1)
-WS_FUNC(2)
-WS_FUNC(3)
-WS_FUNC(4)
-WS_FUNC(5)
-WS_FUNC(6)
-WS_FUNC(7)
-WS_FUNC(8)
+WS_FUNC(1) WS_FUNC(2) WS_FUNC(3) WS_FUNC(4)
+WS_FUNC(5) WS_FUNC(6) WS_FUNC(7) WS_FUNC(8)
 WS_FUNC(9)
 
 #undef WS_FUNC
@@ -129,6 +126,19 @@ static struct {
 
 #undef WS_KEY
 
+static void setup_colors(void) {
+    Colormap cmap = DefaultColormap(dpy, screen);
+    XColor color;
+
+    XParseColor(dpy, cmap, "#444444", &color);
+    XAllocColor(dpy, cmap, &color);
+    border_normal = color.pixel;
+
+    XParseColor(dpy, cmap, "#5588ff", &color);
+    XAllocColor(dpy, cmap, &color);
+    border_focused = color.pixel;
+}
+
 static void sigchld_handler(int sig) {
     (void)sig;
     while (waitpid(-1, NULL, WNOHANG) > 0);
@@ -152,6 +162,8 @@ int main() {
     root = RootWindow(dpy, screen);
     sw = DisplayWidth(dpy, screen);
     sh = DisplayHeight(dpy, screen);
+
+    setup_colors();
     
     // Redirect window management
     XSelectInput(dpy, root, 
@@ -205,14 +217,13 @@ void maprequest(XEvent *e) {
     
     Client *c = calloc(1, sizeof(Client));
     c->win = ev->window;
-    c->x = wa.x;
-    c->y = wa.y;
-    c->w = wa.width;
-    c->h = wa.height;
     c->workspace = current_ws;
     c->next = workspaces[current_ws];
     workspaces[current_ws] = c;
     num_clients++;
+    
+    XSetWindowBorderWidth(dpy, c->win, BORDER_WIDTH);
+        XSetWindowBorder(dpy, c->win, border_normal); 
     
     XSelectInput(dpy, c->win, 
         EnterWindowMask | LeaveWindowMask | FocusChangeMask);
@@ -279,7 +290,11 @@ void keypress(XEvent *e) {
 // Core functionality
 void focus(Client *c) {
     if (!c) return;
+    if (focused && focused != c) {
+        XSetWindowBorder(dpy, focused->win, border_normal);
+    }
     focused = c;
+    XSetWindowBorder(dpy, c->win, border_focused);
     XRaiseWindow(dpy, c->win);
     XSetInputFocus(dpy, c->win, RevertToPointerRoot, CurrentTime);
 }
@@ -290,6 +305,7 @@ void arrange() {
     // Handle fullscreen windows first (they get full screen regardless)
     for (Client *c = workspaces[current_ws]; c; c = c->next) {
         if (c->isfullscreen) {
+            XSetWindowBorderWidth(dpy, c->win, 0);
             resize(c, 0, 0, sw, sh);
             XMapWindow(dpy, c->win);  // Ensure visible
             XRaiseWindow(dpy, c->win); // Ensure fullscreen window is on top
@@ -302,18 +318,23 @@ void arrange() {
     for (Client *c = workspaces[current_ws]; c; c = c->next) {
         if (!c->isfullscreen) n++;
     }
-    
     if (n == 0) return;
-    
-    int mw = sw * master_size;  // Master width
-    int th = sh / (n > 1 ? n - 1 : 1);  // Tile height
-    
+
+    // Total width and height including padding
+    int usable_w = sw - PADDING * 2;
+    int usable_h = sh - PADDING * 2;
+
+    int mw = (int)(usable_w * master_size);  // Master width
+    int sw_w = usable_w - mw - PADDING;      // Tile height
+
     Client *master = workspaces[current_ws];
     
     // Arrange master
     if (master && !master->isfullscreen) {
-        resize(master, sw - mw, 0, mw, sh);
-        XMapWindow(dpy, master->win);  // Ensure visible
+        int x = sw - mw - PADDING;
+        int y = PADDING;
+        resize(master, x, y, mw, usable_h);
+        XMapWindow(dpy, master->win);
     }
     
     // Arrange stack
@@ -322,17 +343,18 @@ void arrange() {
     for (Client *c = workspaces[current_ws]->next; c; c = c->next) {
         if (!c->isfullscreen) stack_count++;
     }
-    
-    int i = 0;
-    for (Client *c = workspaces[current_ws]->next; c; c = c->next) {
-        if (c->isfullscreen) continue;
-        
-        int ty = i * th;
-        int th_actual = (i == stack_count - 1) ? sh - ty : th;
-        if (th_actual < MIN_WIDTH) th_actual = MIN_WIDTH;
-        resize(c, 0, ty, sw - mw, th_actual);
-        XMapWindow(dpy, c->win);  // Ensure it's visible
-        i++;
+
+    if (stack_count > 0) {
+        int th = usable_h / stack_count;  // height of each window in the stack
+        int y = PADDING;
+        for (Client *c = workspaces[current_ws]->next; c; c = c->next) {
+            if (c->isfullscreen) continue;
+            int h = (c->next) ? th : (usable_h - (y - PADDING));
+            if (h < MIN_WIDTH) h = MIN_WIDTH;
+            resize(c, PADDING, y, sw_w, h);
+            XMapWindow(dpy, c->win);
+            y += h + PADDING; // padding between windows
+        }
     }
 
     if (focused && !focused->isfullscreen) {
@@ -340,12 +362,12 @@ void arrange() {
     }
 }
 
-void resize(Client *c, int x, int y, int w, int h) {
+static void resize(Client *c, int x, int y, int w, int h) {
     c->x = x;
     c->y = y;
     c->w = w;
     c->h = h;
-    XMoveResizeWindow(dpy, c->win, x, y, w, h);
+    XMoveResizeWindow(dpy, c->win, x, y, w - 2 * BORDER_WIDTH, h - 2 * BORDER_WIDTH);
 }
 
 // Commands
@@ -521,8 +543,19 @@ static void movewin_to_ws(int ws) {
 
 void fullscreen() {
     if (!focused) return;
-    focused->isfullscreen = !focused->isfullscreen;
-    arrange();
+    if (focused->isfullscreen) {
+        // restore
+        XSetWindowBorderWidth(dpy, focused->win, BORDER_WIDTH);
+        XSetWindowBorder(dpy, focused->win, border_focused);
+        arrange();
+    } else {
+        // fullscreen
+        XSetWindowBorderWidth(dpy, focused->win, 0);
+        focused->isfullscreen = 1;
+        resize(focused, 0, 0, sw, sh);
+        XMapWindow(dpy, focused->win);
+        XRaiseWindow(dpy, focused->win);
+    }
 }
 
 void quit() {

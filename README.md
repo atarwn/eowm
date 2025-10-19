@@ -5,6 +5,8 @@
 This is a simple window manager, inspired by catwm and ratpoison.  
 Might be used for learning purporses
 
+> [!NOTE]
+> Also check my new project [gbwm](https://github.com/atarwn/gbwm)!
 
 Keybinds
 -------
