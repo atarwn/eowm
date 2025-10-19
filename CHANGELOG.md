@@ -1,3 +1,7 @@
+1.3 -> "Technetium"
+-------------------
+ * Added padding and borders
+
 1.2 -> "Transcend"
 ------------------
  * Workspaces!
