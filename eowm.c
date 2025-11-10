@@ -5,12 +5,15 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <stdio.h>
 
 #define MOD Mod1Mask
 #define MASTER_SIZE 0.6
 #define MIN_WIDTH 100
 #define PADDING 10
 #define BORDER_WIDTH 2
+#define MAX_WORKSPACES 9
+#define MAX_STACK_SIZE 512
 
 typedef struct Client Client;
 struct Client {
@@ -24,13 +27,11 @@ typedef void (*CmdFunc)(void);
 
 static Display *dpy;
 static Window root;
-// static Client *clients = NULL;
 static Client *focused = NULL;
 static int screen;
 static int sw, sh; // screen width/height
 static double master_size = MASTER_SIZE;
-static int num_clients = 0;
-static Client *workspaces[9] = {NULL}; // 9 workspaces
+static Client *workspaces[MAX_WORKSPACES] = {NULL};
 static int current_ws = 0;
 static unsigned long border_normal, border_focused;
 
@@ -38,7 +39,7 @@ static unsigned long border_normal, border_focused;
 static void buttonpress(XEvent *e);
 static void configurerequest(XEvent *e);
 static void maprequest(XEvent *e);
-static void unmapnotify(XEvent *e);
+// static void unmapnotify(XEvent *e); // bug
 static void destroynotify(XEvent *e);
 static void enternotify(XEvent *e);
 static void keypress(XEvent *e);
@@ -47,7 +48,7 @@ static void (*handlers[LASTEvent])(XEvent *) = {
     [ButtonPress] = buttonpress,
     [ConfigureRequest] = configurerequest,
     [MapRequest] = maprequest,
-    [UnmapNotify] = unmapnotify,
+    // [UnmapNotify] = unmapnotify, // bug
     [DestroyNotify] = destroynotify,
     [EnterNotify] = enternotify,
     [KeyPress] = keypress
@@ -70,6 +71,7 @@ static void movewin_to_ws(int ws);
 static void fullscreen();
 static void quit();
 static void spawn(const char *cmd);
+static void cleanup();
 
 // Define the workspace functions
 #define WS_FUNC(n) \
@@ -91,10 +93,10 @@ WS_FUNC(9)
 static struct {
     KeySym keysym;
     unsigned int mod;
-    CmdFunc func;          // All commands are void(*)(void)
-    const char *arg;       // If non-NULL, it's a spawn command
+    CmdFunc func;
+    const char *arg;
 } keys[] = {
-    // General navidation & management
+    // General navigation & management
     { XK_j, MOD, (CmdFunc)nextwin, NULL },
     { XK_k, MOD, (CmdFunc)prevwin, NULL },
     { XK_f, MOD, (CmdFunc)fullscreen, NULL },
@@ -112,16 +114,9 @@ static struct {
     { XK_Return, MOD, (CmdFunc)spawn, "alacritty" },
     { XK_p, MOD, (CmdFunc)spawn, "dmenu_run" },
 
-    // Workspaces - DRY with macros!
-    WS_KEY(1)
-    WS_KEY(2)
-    WS_KEY(3)
-    WS_KEY(4)
-    WS_KEY(5)
-    WS_KEY(6)
-    WS_KEY(7)
-    WS_KEY(8)
-    WS_KEY(9)
+    // Workspaces
+    WS_KEY(1) WS_KEY(2) WS_KEY(3) WS_KEY(4) WS_KEY(5)
+    WS_KEY(6) WS_KEY(7) WS_KEY(8) WS_KEY(9)
 };
 
 #undef WS_KEY
@@ -145,17 +140,20 @@ static void sigchld_handler(int sig) {
 }
 
 static int xerrorHandler(Display *dpy, XErrorEvent *ee) {
-    return 0; // Ignore for now
+    char msg[256];
+    XGetErrorText(dpy, ee->error_code, msg, sizeof(msg));
+    fprintf(stderr, "X Error: %s\n", msg);
+    return 0;
 }
 
 int main() {
     XEvent ev;
-    if (!(dpy = XOpenDisplay(NULL))) exit(1);
+    if (!(dpy = XOpenDisplay(NULL))) {
+        fprintf(stderr, "Cannot open display\n");
+        exit(1);
+    }
 
-    // Set error handler early
     XSetErrorHandler(xerrorHandler);
-    
-    // Handle child processes to prevent zombie processes
     signal(SIGCHLD, sigchld_handler);
     
     screen = DefaultScreen(dpy);
@@ -165,19 +163,16 @@ int main() {
 
     setup_colors();
     
-    // Redirect window management
     XSelectInput(dpy, root, 
         SubstructureRedirectMask | SubstructureNotifyMask | 
         EnterWindowMask | LeaveWindowMask | FocusChangeMask);
     
-    // Grab keys
-    for (int i = 0; i < sizeof(keys)/sizeof(keys[0]); i++) {
+    for (size_t i = 0; i < sizeof(keys)/sizeof(keys[0]); i++) {
         KeyCode code = XKeysymToKeycode(dpy, keys[i].keysym);
         XGrabKey(dpy, code, keys[i].mod, root, True,
                  GrabModeAsync, GrabModeAsync);
     }
     
-    // Main event loop
     while (1) {
         XNextEvent(dpy, &ev);
         if (handlers[ev.type])
@@ -185,13 +180,11 @@ int main() {
     }
 }
 
-// Event handlers
 void buttonpress(XEvent *e) {
     XButtonPressedEvent *be = &e->xbutton;
     for (Client *c = workspaces[current_ws]; c; c = c->next) {
         if (c->win == be->subwindow) {
             focus(c);
-            XRaiseWindow(dpy, c->win);
             break;
         }
     }
@@ -216,14 +209,18 @@ void maprequest(XEvent *e) {
     if (!XGetWindowAttributes(dpy, ev->window, &wa)) return;
     
     Client *c = calloc(1, sizeof(Client));
+    if (!c) {
+        fprintf(stderr, "Failed to allocate client\n");
+        return;
+    }
+    
     c->win = ev->window;
     c->workspace = current_ws;
     c->next = workspaces[current_ws];
     workspaces[current_ws] = c;
-    num_clients++;
     
     XSetWindowBorderWidth(dpy, c->win, BORDER_WIDTH);
-        XSetWindowBorder(dpy, c->win, border_normal); 
+    XSetWindowBorder(dpy, c->win, border_normal); 
     
     XSelectInput(dpy, c->win, 
         EnterWindowMask | LeaveWindowMask | FocusChangeMask);
@@ -236,23 +233,24 @@ static void removeclient(Window win) {
     Client *c, **prev;
     for (prev = &workspaces[current_ws]; (c = *prev); prev = &c->next) {
         if (c->win == win) {
+            int was_focused = (focused == c);
             *prev = c->next;
             free(c);
-            num_clients--;
+            
+            if (!workspaces[current_ws]) {
+                focused = NULL;
+            } else if (was_focused) {
+                focus(workspaces[current_ws]);
+            }
+            arrange();
             break;
         }
     }
-    if (!workspaces[current_ws]) {
-        focused = NULL;
-    } else if (focused == c) {
-        focus(workspaces[current_ws]); // clients guaranteed non-NULL here
-    }
-    arrange();
 }
 
-void unmapnotify(XEvent *e) {
-    removeclient(e->xunmap.window);
-}
+// void unmapnotify(XEvent *e) { // bug
+//     removeclient(e->xunmap.window);
+// }
 
 void destroynotify(XEvent *e) {
     removeclient(e->xdestroywindow.window);
@@ -272,22 +270,20 @@ void enternotify(XEvent *e) {
 
 void keypress(XEvent *e) {
     KeySym keysym = XLookupKeysym(&e->xkey, 0);
-    // Mask out irrelevant modifiers: CapsLock & NumLock.
     unsigned int state = e->xkey.state & ~(LockMask | Mod2Mask);
 
-    for (int i = 0; i < sizeof(keys)/sizeof(keys[0]); i++) {
+    for (size_t i = 0; i < sizeof(keys)/sizeof(keys[0]); i++) {
         if (keysym == keys[i].keysym && state == keys[i].mod) {
             if (keys[i].arg) {
-                spawn(keys[i].arg);  // Explicit call for spawn
+                spawn(keys[i].arg);
             } else {
-                keys[i].func();      // All others are void(void)
+                keys[i].func();
             }
             break;
         }
     }
 }
 
-// Core functionality
 void focus(Client *c) {
     if (!c) return;
     if (focused && focused != c) {
@@ -302,35 +298,45 @@ void focus(Client *c) {
 void arrange() {
     if (!workspaces[current_ws]) return;
     
-    // Handle fullscreen windows first (they get full screen regardless)
+    // Handle fullscreen windows first
     for (Client *c = workspaces[current_ws]; c; c = c->next) {
         if (c->isfullscreen) {
             XSetWindowBorderWidth(dpy, c->win, 0);
             resize(c, 0, 0, sw, sh);
-            XMapWindow(dpy, c->win);  // Ensure visible
-            XRaiseWindow(dpy, c->win); // Ensure fullscreen window is on top
-            return; // Only one fullscreen window should be visible
+            XMapWindow(dpy, c->win);
+            XRaiseWindow(dpy, c->win);
+            // Hide other windows
+            for (Client *other = workspaces[current_ws]; other; other = other->next) {
+                if (other != c) {
+                    XUnmapWindow(dpy, other->win);
+                }
+            }
+            return;
         }
     }
     
-    // Count non-fullscreen clients
+    // No fullscreen windows - ensure all windows have borders and are mapped
+    for (Client *c = workspaces[current_ws]; c; c = c->next) {
+        XSetWindowBorderWidth(dpy, c->win, BORDER_WIDTH);
+        XMapWindow(dpy, c->win);
+    }
+    
+    // Count clients
     int n = 0;
     for (Client *c = workspaces[current_ws]; c; c = c->next) {
-        if (!c->isfullscreen) n++;
+        n++;
     }
     if (n == 0) return;
 
-    // Total width and height including padding
     int usable_w = sw - PADDING * 2;
     int usable_h = sh - PADDING * 2;
-
-    int mw = (int)(usable_w * master_size);  // Master width
-    int sw_w = usable_w - mw - PADDING;      // Tile height
+    int mw = (int)(usable_w * master_size);
+    int stack_w = usable_w - mw - PADDING;
 
     Client *master = workspaces[current_ws];
     
     // Arrange master
-    if (master && !master->isfullscreen) {
+    if (master) {
         int x = sw - mw - PADDING;
         int y = PADDING;
         resize(master, x, y, mw, usable_h);
@@ -338,26 +344,20 @@ void arrange() {
     }
     
     // Arrange stack
-    int stack_count = 0;
-    // Count stack clients first
-    for (Client *c = workspaces[current_ws]->next; c; c = c->next) {
-        if (!c->isfullscreen) stack_count++;
-    }
-
+    int stack_count = n - 1;
     if (stack_count > 0) {
-        int th = usable_h / stack_count;  // height of each window in the stack
+        int th = usable_h / stack_count;
         int y = PADDING;
         for (Client *c = workspaces[current_ws]->next; c; c = c->next) {
-            if (c->isfullscreen) continue;
             int h = (c->next) ? th : (usable_h - (y - PADDING));
             if (h < MIN_WIDTH) h = MIN_WIDTH;
-            resize(c, PADDING, y, sw_w, h);
+            resize(c, PADDING, y, stack_w, h);
             XMapWindow(dpy, c->win);
-            y += h + PADDING; // padding between windows
+            y += h + PADDING;
         }
     }
 
-    if (focused && !focused->isfullscreen) {
+    if (focused) {
         XRaiseWindow(dpy, focused->win);
     }
 }
@@ -370,7 +370,6 @@ static void resize(Client *c, int x, int y, int w, int h) {
     XMoveResizeWindow(dpy, c->win, x, y, w - 2 * BORDER_WIDTH, h - 2 * BORDER_WIDTH);
 }
 
-// Commands
 void killclient() {
     if (focused) XKillClient(dpy, focused->win);
 }
@@ -378,11 +377,9 @@ void killclient() {
 void togglemaster() {
     if (!workspaces[current_ws] || !workspaces[current_ws]->next) return;
     
-    // Swap first and second client
     Client *first = workspaces[current_ws];
     Client *second = workspaces[current_ws]->next;
     
-    // Update links
     first->next = second->next;
     second->next = first;
     workspaces[current_ws] = second;
@@ -404,7 +401,6 @@ void decmaster() {
 
 void nextwin() {
     if (!focused || !focused->next) {
-        // Wrap to first
         if (workspaces[current_ws]) focus(workspaces[current_ws]);
         return;
     }
@@ -426,28 +422,26 @@ void prevwin() {
     if (prev) {
         focus(prev);
     } else {
-        focus(last); // wrap to last
+        focus(last);
     }
 }
 
-// Returns number of stack clients filled into the 'stack' array (which must be pre-allocated)
 static int get_stack_clients(Client *stack[], int max) {
     if (!workspaces[current_ws]) return 0;
     int n = 0;
-    Client *c = workspaces[current_ws]->next; // stack starts after master
+    Client *c = workspaces[current_ws]->next;
     while (c && n < max) {
-        stack[n] = c;          // stack[n] is Client*, c is Client* → OK
-        n++;
+        stack[n++] = c;
         c = c->next;
     }
     return n;
 }
 
 static void move_in_stack(int delta) {
-    if (!focused || focused == workspaces[current_ws] || num_clients < 3) return;
+    if (!focused || focused == workspaces[current_ws]) return;
 
-    Client *stack[256];
-    int n = get_stack_clients(stack, 256);
+    Client *stack[MAX_STACK_SIZE];
+    int n = get_stack_clients(stack, MAX_STACK_SIZE);
     if (n < 2) return;
 
     int idx = -1;
@@ -476,24 +470,23 @@ static void move_in_stack(int delta) {
     current->next = NULL;
 
     arrange();
-    focus(focused);
 }
 
-void movewinup()    { move_in_stack(-1); }
-void movewindown()  { move_in_stack(+1); }
+void movewinup()   { move_in_stack(-1); }
+void movewindown() { move_in_stack(+1); }
 
 static void switchws(int ws) {
-    if (ws < 0 || ws >= 9) return;
+    if (ws < 0 || ws >= MAX_WORKSPACES || ws == current_ws) return;
+    
+    int old_ws = current_ws;
     current_ws = ws;
     
-    // Hide all windows
-    for (int i = 0; i < 9; i++) {
-        for (Client *c = workspaces[i]; c; c = c->next) {
-            XUnmapWindow(dpy, c->win);
-        }
+    // Unmap old workspace windows
+    for (Client *c = workspaces[old_ws]; c; c = c->next) {
+        XUnmapWindow(dpy, c->win);
     }
     
-    // Show current workspace windows
+    // Map current workspace windows
     for (Client *c = workspaces[current_ws]; c; c = c->next) {
         XMapWindow(dpy, c->win);
     }
@@ -504,7 +497,7 @@ static void switchws(int ws) {
 }
 
 static void movewin_to_ws(int ws) {
-    if (!focused || ws < 0 || ws >= 9 || ws == current_ws) return;
+    if (!focused || ws < 0 || ws >= MAX_WORKSPACES || ws == current_ws) return;
     
     Client *moving = focused;
     
@@ -513,61 +506,70 @@ static void movewin_to_ws(int ws) {
     for (prev = &workspaces[current_ws]; *prev; prev = &(*prev)->next) {
         if (*prev == moving) {
             *prev = moving->next;
-            num_clients--;  // Decrease count for current workspace
             break;
         }
     }
     
-    // Add to target workspace (at the front, becomes master)
+    // Add to target workspace
     moving->workspace = ws;
     moving->next = workspaces[ws];
     workspaces[ws] = moving;
-    moving->isfullscreen = 0;  // Reset fullscreen state
-    num_clients++;  // Increase count (this is actually workspace-specific, see note below)
+    moving->isfullscreen = 0;
     
-    // Hide the window we just moved
     XUnmapWindow(dpy, moving->win);
     
-    // Update focus to next available window in current workspace
     focused = workspaces[current_ws];
     if (focused) {
         focus(focused);
-    } else {
-        // No windows left, clear focus
-        focused = NULL;
     }
     
-    // Re-arrange current workspace
     arrange();
 }
 
 void fullscreen() {
     if (!focused) return;
+    
     if (focused->isfullscreen) {
-        // restore
+        // Exit fullscreen
+        focused->isfullscreen = 0;
         XSetWindowBorderWidth(dpy, focused->win, BORDER_WIDTH);
         XSetWindowBorder(dpy, focused->win, border_focused);
-        arrange();
+        arrange();  // arrange() now handles remapping all windows
     } else {
-        // fullscreen
-        XSetWindowBorderWidth(dpy, focused->win, 0);
+        // Enter fullscreen
         focused->isfullscreen = 1;
-        resize(focused, 0, 0, sw, sh);
-        XMapWindow(dpy, focused->win);
-        XRaiseWindow(dpy, focused->win);
+        arrange();  // arrange() handles hiding others and setting up fullscreen
+    }
+}
+
+static void cleanup() {
+    for (int i = 0; i < MAX_WORKSPACES; i++) {
+        Client *c = workspaces[i];
+        while (c) {
+            Client *next = c->next;
+            free(c);
+            c = next;
+        }
     }
 }
 
 void quit() {
+    cleanup();
+    XCloseDisplay(dpy);
     exit(0);
 }
 
 void spawn(const char *cmd) {
-    if (fork() == 0) {
-        // Close display connection in child
+    pid_t pid = fork();
+    if (pid == -1) {
+        fprintf(stderr, "Fork failed\n");
+        return;
+    }
+    if (pid == 0) {
         if (dpy) close(ConnectionNumber(dpy));
         setsid();
         execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
+        fprintf(stderr, "Exec failed\n");
         exit(1);
     }
 }
