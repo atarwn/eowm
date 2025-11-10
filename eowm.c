@@ -330,31 +330,38 @@ void arrange() {
 
     int usable_w = sw - PADDING * 2;
     int usable_h = sh - PADDING * 2;
+
+    // Special case: single window fills entire usable area
+    if (n == 1) {
+        Client *only = workspaces[current_ws];
+        resize(only, PADDING, PADDING, usable_w, usable_h);
+        XMapWindow(dpy, only->win);
+        if (focused) XRaiseWindow(dpy, focused->win);
+        return;
+    }
+
+    // Normal master-stack layout for n >= 2
     int mw = (int)(usable_w * master_size);
     int stack_w = usable_w - mw - PADDING;
 
     Client *master = workspaces[current_ws];
-    
-    // Arrange master
     if (master) {
-        int x = sw - mw - PADDING;
+        int x = sw - mw - PADDING;  // master on right
         int y = PADDING;
         resize(master, x, y, mw, usable_h);
         XMapWindow(dpy, master->win);
     }
-    
-    // Arrange stack
+
+    // Arrange stack (n-1 windows on left)
     int stack_count = n - 1;
-    if (stack_count > 0) {
-        int th = usable_h / stack_count;
-        int y = PADDING;
-        for (Client *c = workspaces[current_ws]->next; c; c = c->next) {
-            int h = (c->next) ? th : (usable_h - (y - PADDING));
-            if (h < MIN_WIDTH) h = MIN_WIDTH;
-            resize(c, PADDING, y, stack_w, h);
-            XMapWindow(dpy, c->win);
-            y += h + PADDING;
-        }
+    int th = usable_h / stack_count;
+    int y = PADDING;
+    for (Client *c = workspaces[current_ws]->next; c; c = c->next) {
+        int h = (c->next) ? th : (usable_h - (y - PADDING));
+        if (h < MIN_WIDTH) h = MIN_WIDTH;
+        resize(c, PADDING, y, stack_w, h);
+        XMapWindow(dpy, c->win);
+        y += h + PADDING;
     }
 
     if (focused) {
