@@ -1,15 +1,16 @@
+<img src="/logo.svg" alt="eowm" align="right" width="150"/>
+
 `┏┓┏┓┓┏┏┏┳┓`  
 `┗ ┗┛┗┻┛┛┗┗`
 ============
 
-This is a simple window manager, inspired by catwm and ratpoison.  
-Might be used for learning purporses
-
-> [!NOTE]
-> Also check my new project [gbwm](https://github.com/atarwn/gbwm)!
+This is a simple window manager that continues and develops the idea of catwm for learning purposes.
 
 Keybinds
 -------
+
+Mod - Mod1Mask (Alt)
+You can replace it with Mod4Mask (Win)
 
 |      Keybind      | Action |
 |-------------------|--------|
@@ -40,14 +41,14 @@ Layout
 |____|______________|
 ```
 
-No borders, no UI, new window pushes master to the top of the stack
+borders, but still no UI, new window pushes master to the top of the stack
 
 
 Naming
 ------
 
 it was vewy hard:
- * catwm - already exists
+ * catwm - origin
  * kittywm - stupid
  * meowm - two m's
  * eowm - hmm, ok
@@ -58,14 +59,13 @@ And you also stumbled upon the expanded form of the name, which I spent one brai
 Why?!
 -----
 
-**_fredom_**
+fredom
 
 
 Thanks to:
 ==========
 
- * 2bwm
- * catwm
- * tinywm
- * dwm
- * sxwm
+ * [catwm](https://github.com/pyknite/catwm) - inspiration
+ * [tinywm](https://github.com/mackstann/tinywm) - basic knowledge
+ * [dwm](https://git.suckless.org/dwm) - everything
+ * [sowm](https://github.com/dylanaraps/sowm) - links to other WMs sources 

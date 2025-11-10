@@ -1,3 +1,8 @@
+1.4 -> "Evolutionize"
+---------------------
+ * Fix sereval bugs
+ * Now single window fills master & stack area
+
 1.3 -> "Technetium"
 -------------------
  * Added padding and borders
