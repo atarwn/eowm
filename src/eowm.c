@@ -50,6 +50,7 @@ static Atom wm_protocols, wm_delete_window, wm_state, wm_take_focus;
 // GLOBAL VARIABLES END
 
 // FUNCTION DECLARATIONS
+// Event Handlers
 static void buttonpress(XEvent *e);
 static void configurerequest(XEvent *e);
 static void maprequest(XEvent *e);
@@ -57,6 +58,8 @@ static void unmapnotify(XEvent *e);
 static void destroynotify(XEvent *e);
 static void enternotify(XEvent *e);
 static void keypress(XEvent *e);
+
+// Helper functions
 static void focus(Client *c);
 static void arrange(void);
 static void resize(Client *c, int x, int y, int w, int h);
@@ -64,6 +67,8 @@ static void removeclient(Window win);
 static int get_stack_clients(Client *stack[], int max);
 static void move_in_stack(int delta);
 static void die(const char *fmt, ...);
+
+// Managers
 static void killclient(const Arg *arg);
 static void togglemaster(const Arg *arg);
 static void incmaster(const Arg *arg);
@@ -224,13 +229,40 @@ void maprequest(XEvent *e) {
     XMapRequestEvent *ev = &e->xmaprequest;
     XWindowAttributes wa;
     if (!XGetWindowAttributes(dpy, ev->window, &wa)) return;
+
+    if (wa.override_redirect) {
+        XMapWindow(dpy, ev->window);
+        return;
+    }
     
+    Atom actual_type;
+    int actual_format;
+    unsigned long nitems, bytes_after;
+    unsigned char *prop = NULL;
+    
+    Atom net_wm_window_type = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", False);
+    if (XGetWindowProperty(dpy, ev->window, net_wm_window_type,
+                          0, 1, False, XA_ATOM, &actual_type,
+                          &actual_format, &nitems, &bytes_after, &prop) == Success) {
+        if (prop) {
+            Atom type = *(Atom*)prop;
+            Atom notification = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_NOTIFICATION", False);
+            Atom splash = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_SPLASH", False);
+            XFree(prop);
+            
+            if (type == notification || type == splash) {
+                XMapWindow(dpy, ev->window);
+                return;
+            }
+        }
+    }
+
     Client *c = calloc(1, sizeof(Client));
     if (!c) {
         fprintf(stderr, "Failed to allocate client\n");
         return;
     }
-    
+
     c->win = ev->window;
     c->workspace = current_ws;
     c->next = workspaces[current_ws];
