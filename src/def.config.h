@@ -14,17 +14,6 @@ static const char root_bg[] = "#1a1a1a";
 
 #define VERSION "1.0"
 
-// TODO: applications
-// static const char *termcmd[] = { "alacritty", NULL };
-// static const char *menucmd[] = { "dmenu_run", NULL };
-// static const char *upbrightness[]   = { "brightnessctl", "set", "10%+", NULL };
-// static const char *downbrightness[] = { "brightnessctl", "set", "10%-", NULL };
-// static const char *incvol[] = {"wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "5%+", NULL};
-// static const char *decvol[] = {"wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "5%-", NULL};
-// static const char *mutevol[] = {"wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "toggle", NULL};
-// static const char *scrotcmd[] = { "/bin/sh", "-c", "scrot ~/Pictures/Screenshots/$(date +%Y.%m.%d_%H.%M).png", NULL };
-// static const char *scrotselcmd[] = { "/bin/sh", "-c", "scrot -s ~/Pictures/Screenshots/$(date +%Y.%m.%d_%H.%M).png", NULL };
-
 // key definitions
 static Key keys[] = {
     /* modifier	key	function	argument */
@@ -42,18 +31,18 @@ static Key keys[] = {
     { MOD,	XK_l,	decmaster,	{0} },
     { MOD,	XK_space,	togglemaster,	{0} },
 
-    // TODO: Applications
+    // Applications
     { MOD,	XK_Return,	spawn,	{.cmd = "alacritty"} },
     { MOD,	XK_p,	spawn,	{.cmd = "dmenu_run"} },
 
-    // TODO: Utilities (to use XF* uncomment #include <X11/XF86keysym.h> in eowm.c)
-    // { 0,	XF86XK_MonBrightnessUp,	spawn,	{.v = upbrightness } },
-    // { 0,	XF86XK_MonBrightnessDown,  spawn,	{.v = downbrightness } },
-    // { 0,	XF86XK_AudioLowerVolume,	spawn,	{.v = decvol} },	
-    // { 0,	XF86XK_AudioRaiseVolume,	spawn,	{.v = incvol} },
-    // { 0,	XF86XK_AudioMute,	spawn,	{.v = mutevol} },
-    // { 0,	XK_Print,	spawn,	{.v = scrotcmd} },
-    // { 0|ShiftMask,	XK_Print,	spawn,	{.v = scrotselcmd} },
+    // Utilities (uncomment #include <X11/XF86keysym.h> in eowm.c to use XF86 keys)
+    { 0,	XK_Print,	spawn,	{.cmd = "scrot ~/Pictures/Screenshots/$(date +%Y.%m.%d_%H.%M).png"} },
+    { ShiftMask,	XK_Print,	spawn,	{.cmd = "scrot -s ~/Pictures/Screenshots/$(date +%Y.%m.%d_%H.%M).png"} },
+    // { 0,	XF86XK_MonBrightnessUp,	spawn,	{.cmd = "brightnessctl set 10%+"} },
+    // { 0,	XF86XK_MonBrightnessDown,	spawn,	{.cmd = "brightnessctl set 10%-"} },
+    // { 0,	XF86XK_AudioLowerVolume,	spawn,	{.cmd = "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-"} },
+    // { 0,	XF86XK_AudioRaiseVolume,	spawn,	{.cmd = "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+"} },
+    // { 0,	XF86XK_AudioMute,	spawn,	{.cmd = "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"} },
 
     // Workspaces
     { MOD,	XK_1,	switchws,	{.i = 0} },
