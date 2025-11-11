@@ -1,4 +1,4 @@
-<img src="logo.svg" alt="eowm" align="right" width="150"/>
+<img src="assets/logo.svg" alt="eowm" align="right" width="150"/>
 
 `┏┓┏┓┓┏┏┏┳┓`  
 `┗ ┗┛┗┻┛┛┗┗`
@@ -45,8 +45,15 @@ Layout
 |____|______________|
 ```
 
-borders, but still no UI, new window pushes master to the top of the stack
+borders and padding, but still no UI  
+new window pushes master to the top of the stack
 
+
+Screenshots
+-----------
+![Normal](assets/demo1.png)
+![Single window](assets/demo2.png)
+![Fullscreen](assets/demo3.png)
 
 Naming
 ------

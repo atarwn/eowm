@@ -3,11 +3,11 @@ CC ?= cc
 CFLAGS ?= -O2 -Wall
 PREFIX ?= /usr/local
 
-$(TARGET): config.h
-	$(CC) $(CFLAGS) eowm.c -o $@ -lX11
+$(TARGET): src/config.h
+	$(CC) $(CFLAGS) src/eowm.c -o $@ -lX11
 
-config.h:
-	cp def.config.h config.h
+src/config.h:
+	cp src/def.config.h src/config.h
 
 .PHONY: install uninstall clean
 
@@ -18,4 +18,4 @@ uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/$(TARGET)
 
 clean:
-	rm -f $(TARGET)
+	rm -f $(TARGET) src/config.h
