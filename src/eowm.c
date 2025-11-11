@@ -76,6 +76,7 @@ static void keypress(XEvent *e);
 // Helper functions
 static void focus(Client *c);
 static void arrange(void);
+static void scan(void);
 static void resize(Client *c, int x, int y, int w, int h);
 static void removeclient(Window win);
 static int get_stack_clients(Client *stack[], int max);
