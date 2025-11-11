@@ -276,6 +276,8 @@ int main(int argc, char *argv[]) {
         XGrabKey(dpy, code, keys[i].mod, root, True,
                  GrabModeAsync, GrabModeAsync);
     }
+
+    scan();
     
     while (1) {
         XNextEvent(dpy, &ev);
@@ -318,6 +320,17 @@ void maprequest(XEvent *e) {
         XMapWindow(dpy, ev->window);
         return;
     }
+
+    // Are we already managing this window?
+    for (int i = 0; i < 9; i++) {
+        for (Client *c = workspaces[i]; c; c = c->next) {
+            if (c->win == ev->window) {
+                // Just display it
+                XMapWindow(dpy, ev->window);
+                return;
+            }
+        }
+    }
     
     Atom actual_type;
     int actual_format;
@@ -335,8 +348,12 @@ void maprequest(XEvent *e) {
             Atom dock = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DOCK", False);
             XFree(prop);
             
-            if (type == notification || type == splash || type == dock) {
-                // Check if it's a strut window (panels/docks)
+            if (type == notification || type == splash) {
+                XMapWindow(dpy, ev->window);
+                return;
+            }
+
+            if (type == dock) {
                 long struts[4] = {0};
                 if (get_window_struts(ev->window, struts)) {
                     StrutWindow *sw = calloc(1, sizeof(StrutWindow));
@@ -371,6 +388,27 @@ void maprequest(XEvent *e) {
         return;
     }
 
+    Window trans = None;
+    if (XGetTransientForHint(dpy, ev->window, &trans) && trans != None) {
+        // This is a dialog box - find the parent window
+        Client *parent = NULL;
+        for (int i = 0; i < 9; i++) {
+            for (Client *c = workspaces[i]; c; c = c->next) {
+                if (c->win == trans) {
+                    parent = c;
+                    break;
+                }
+            }
+            if (parent) break;
+        }
+        
+        // Show dialogs without adding them to the list of managed windows
+        // (they are managed by their parent window)
+        XMapWindow(dpy, ev->window);
+        XRaiseWindow(dpy, ev->window);
+        return;
+    }
+
     Client *c = calloc(1, sizeof(Client));
     if (!c) {
         fprintf(stderr, "Failed to allocate client\n");
@@ -381,6 +419,7 @@ void maprequest(XEvent *e) {
     c->workspace = current_ws;
     c->next = workspaces[current_ws];
     c->hidden = 0;
+    c->isfullscreen = 0;
     workspaces[current_ws] = c;
     
     XSetWindowBorderWidth(dpy, c->win, border_width);
@@ -411,28 +450,29 @@ void unmapnotify(XEvent *e) {
     }
     
     Client *found = NULL;
-    for (int i = 0; i < 9; i++) {
-        for (Client *c = workspaces[i]; c; c = c->next) {
-            if (c->win == ev->window && c->hidden) {
-                c->hidden = 0; // Clear flag, ignore event
-                return;
-            }
-        }
-    }
+    int found_ws = -1;
+    
     for (int i = 0; i < 9; i++) {
         for (Client *c = workspaces[i]; c; c = c->next) {
             if (c->win == ev->window) {
                 found = c;
+                found_ws = i;
                 break;
             }
         }
         if (found) break;
     }
-    if (found && found->workspace != current_ws) return;
+    if (!found) return;
     
-    if (found) {
-        removeclient(ev->window);
+    if (found->hidden) {
+        found->hidden = 0;
+        return;
     }
+
+    if (found_ws != current_ws)
+        return;
+
+    removeclient(ev->window);
 }
 
 void destroynotify(XEvent *e) {
@@ -484,6 +524,8 @@ static void removeclient(Window win) {
         if (c->win == win) {
             int was_focused = (focused == c);
             *prev = c->next;
+            XSelectInput(dpy, c->win, NoEventMask);
+            
             free(c);
             
             if (!workspaces[current_ws]) {
@@ -491,8 +533,9 @@ static void removeclient(Window win) {
             } else if (was_focused) {
                 focus(workspaces[current_ws]);
             }
+            
             arrange();
-            break;
+            return;
         }
     }
 }
@@ -592,6 +635,29 @@ void arrange() {
 
     if (focused) {
         XRaiseWindow(dpy, focused->win);
+    }
+}
+
+static void scan(void) {
+    unsigned int i, num;
+    Window d1, d2, *wins = NULL;
+    XWindowAttributes wa;
+
+    if (XQueryTree(dpy, root, &d1, &d2, &wins, &num)) {
+        for (i = 0; i < num; i++) {
+            if (!XGetWindowAttributes(dpy, wins[i], &wa)
+                || wa.override_redirect) 
+                continue;
+                
+            if (wa.map_state == IsViewable) {
+                XEvent e;
+                e.type = MapRequest;
+                e.xmaprequest.window = wins[i];
+                maprequest(&e);
+            }
+        }
+        if (wins)
+            XFree(wins);
     }
 }
 // CLIENT MANAGEMENT FUNCTIONS END
