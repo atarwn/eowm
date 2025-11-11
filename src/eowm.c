@@ -438,8 +438,6 @@ void maprequest(XEvent *e) {
     arrange();
 }
 
-static void unmapnotify(XEvent *e);
-
 void unmapnotify(XEvent *e) {
     XUnmapEvent *ev = &e->xunmap;
     
@@ -467,15 +465,12 @@ void unmapnotify(XEvent *e) {
         }
         if (found) break;
     }
+
     if (!found) return;
     
-    if (found->hidden) {
-        found->hidden = 0;
-        return;
-    }
-
-    if (found_ws != current_ws)
-        return;
+    if (found->hidden) return;
+    
+    if (found_ws != current_ws) return;
 
     removeclient(ev->window);
 }
@@ -547,6 +542,13 @@ static void removeclient(Window win) {
 
 void focus(Client *c) {
     if (!c) return;
+
+    if (c->hidden || c->workspace != current_ws) return;
+
+    // Exists?
+    XWindowAttributes wa;
+    if (!XGetWindowAttributes(dpy, c->win, &wa)) return;
+    
     if (focused && focused != c) {
         XSetWindowBorder(dpy, focused->win, border_normal);
     }
@@ -697,12 +699,31 @@ void decmaster(const Arg *arg) {
     arrange();
 }
 
+// This thing can be only here and nowhere else
+// Required by nextwin & prevwin
+static int can_focus(Client *c) {
+    if (!c) return 0;
+    if (c->hidden || c->workspace != current_ws) return 0;
+    
+    XWindowAttributes wa;
+    if (!XGetWindowAttributes(dpy, c->win, &wa)) return 0;
+    
+    return 1;
+}
+
 void nextwin(const Arg *arg) {
-    if (!focused || !focused->next) {
-        if (workspaces[current_ws]) focus(workspaces[current_ws]);
-        return;
+    if (!focused || !workspaces[current_ws]) return;
+    
+    Client *next = focused->next;
+    while (next && !can_focus(next)) {
+        next = next->next;
     }
-    focus(focused->next);
+    
+    if (next) {
+        focus(next);
+    } else if (can_focus(workspaces[current_ws])) {
+        focus(workspaces[current_ws]);
+    }
 }
 
 void prevwin(const Arg *arg) {
@@ -710,16 +731,17 @@ void prevwin(const Arg *arg) {
 
     Client *prev = NULL;
     Client *last = workspaces[current_ws];
+    
     for (Client *c = workspaces[current_ws]; c; c = c->next) {
-        if (c->next == focused) {
+        if (c->next == focused && can_focus(c)) {
             prev = c;
         }
-        if (c->next) last = c->next;
+        if (c->next && can_focus(c->next)) last = c->next;
     }
 
     if (prev) {
         focus(prev);
-    } else {
+    } else if (can_focus(last)) {
         focus(last);
     }
 }
