@@ -52,6 +52,7 @@ static int screen;
 static int sw, sh; // screen width/height
 static double master_size;
 static Client *workspaces[9] = {NULL};
+static Client *last_focused[9] = {NULL};
 static int current_ws = 0;
 static unsigned long border_normal, border_focused;
 static Atom wm_protocols, wm_delete_window, wm_state, wm_take_focus;
@@ -525,6 +526,10 @@ static void removeclient(Window win) {
             int was_focused = (focused == c);
             *prev = c->next;
             XSelectInput(dpy, c->win, NoEventMask);
+
+            if (last_focused[current_ws] == c) {
+                last_focused[current_ws] = NULL;
+            }
             
             free(c);
             
@@ -553,6 +558,7 @@ void focus(Client *c) {
         XSetWindowBorder(dpy, focused->win, border_normal);
     }
     focused = c;
+    last_focused[current_ws] = c;
     XSetWindowBorder(dpy, c->win, border_focused);
     XRaiseWindow(dpy, c->win);
     XSetInputFocus(dpy, c->win, RevertToPointerRoot, CurrentTime);
@@ -816,8 +822,13 @@ static void switchws(const Arg *arg) {
         XMapWindow(dpy, c->win);
         XSetWindowBorder(dpy, c->win, border_normal);
     }
+
+    // Restre last focused
+    focused = last_focused[current_ws];
+    if (!focused || !can_focus(focused)) {
+        focused = workspaces[current_ws];
+    }
     
-    focused = workspaces[current_ws];
     if (focused) focus(focused);
     arrange();
 }
@@ -869,6 +880,7 @@ void fullscreen(const Arg *arg) {
         for (Client *c = workspaces[current_ws]; c; c = c->next) {
             c->hidden = 0;
             XMapWindow(dpy, c->win);
+            focus(focused);
         }
         
         arrange();
