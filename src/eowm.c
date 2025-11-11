@@ -2,8 +2,8 @@
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/keysym.h>
-#include <X11/Xatom.h>
 // #include <X11/XF86keysym.h>
+#include <X11/Xatom.h>
 #include <X11/cursorfont.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -22,6 +22,13 @@ struct Client {
     int workspace;
     int hidden;
     Client *next;
+};
+
+typedef struct StrutWindow StrutWindow;
+struct StrutWindow {
+    Window win;
+    long struts[4]; // left, right, top, bottom
+    StrutWindow *next;
 };
 
 typedef union {
@@ -48,6 +55,12 @@ static Client *workspaces[9] = {NULL};
 static int current_ws = 0;
 static unsigned long border_normal, border_focused;
 static Atom wm_protocols, wm_delete_window, wm_state, wm_take_focus;
+static Atom net_wm_strut, net_wm_strut_partial;
+static StrutWindow *strut_windows = NULL;
+static int global_strut_left = 0;
+static int global_strut_right = 0;
+static int global_strut_top = 0;
+static int global_strut_bottom = 0;
 // GLOBAL VARIABLES END
 
 // FUNCTION DECLARATIONS
@@ -68,6 +81,9 @@ static void removeclient(Window win);
 static int get_stack_clients(Client *stack[], int max);
 static void move_in_stack(int delta);
 static void die(const char *fmt, ...);
+static void update_struts(void);
+static void remove_strut_window(Window win);
+static int get_window_struts(Window win, long struts[4]);
 
 // Managers
 static void killclient(const Arg *arg);
@@ -144,6 +160,8 @@ static void setup_icccm(void) {
     wm_delete_window = XInternAtom(dpy, "WM_DELETE_WINDOW", False);
     wm_state = XInternAtom(dpy, "WM_STATE", False);
     wm_take_focus = XInternAtom(dpy, "WM_TAKE_FOCUS", False);
+    net_wm_strut = XInternAtom(dpy, "_NET_WM_STRUT", False);
+    net_wm_strut_partial = XInternAtom(dpy, "_NET_WM_STRUT_PARTIAL", False);
 }
 
 void die(const char *fmt, ...) {
@@ -153,6 +171,70 @@ void die(const char *fmt, ...) {
     va_end(ap);
     fputc('\n', stderr);
     exit(1);
+}
+
+static void update_struts(void) {
+    global_strut_left = global_strut_right = global_strut_top = global_strut_bottom = 0;
+    
+    for (StrutWindow *sw = strut_windows; sw; sw = sw->next) {
+        if (sw->struts[0] > global_strut_left) global_strut_left = sw->struts[0];
+        if (sw->struts[1] > global_strut_right) global_strut_right = sw->struts[1];
+        if (sw->struts[2] > global_strut_top) global_strut_top = sw->struts[2];
+        if (sw->struts[3] > global_strut_bottom) global_strut_bottom = sw->struts[3];
+    }
+}
+
+static void remove_strut_window(Window win) {
+    StrutWindow **prev = &strut_windows;
+    for (StrutWindow *sw = strut_windows; sw; sw = sw->next) {
+        if (sw->win == win) {
+            *prev = sw->next;
+            free(sw);
+            update_struts();
+            return;
+        }
+        prev = &sw->next;
+    }
+}
+
+static int get_window_struts(Window win, long struts[4]) {
+    Atom actual_type;
+    int actual_format;
+    unsigned long nitems, bytes_after;
+    unsigned char *data = NULL;
+    int has_struts = 0;
+    
+    // Try _NET_WM_STRUT_PARTIAL first (first 4 values are same as _NET_WM_STRUT)
+    if (XGetWindowProperty(dpy, win, net_wm_strut_partial, 0, 4, False, XA_CARDINAL,
+                          &actual_type, &actual_format, &nitems, &bytes_after, &data) == Success) {
+        if (actual_type == XA_CARDINAL && actual_format == 32 && nitems >= 4) {
+            long *vals = (long*)data;
+            for (int i = 0; i < 4; i++) {
+                struts[i] = vals[i];
+                if (vals[i] > 0) has_struts = 1;
+            }
+            XFree(data);
+            return has_struts;
+        }
+        if (data) XFree(data);
+    }
+    
+    // Fall back to _NET_WM_STRUT
+    if (XGetWindowProperty(dpy, win, net_wm_strut, 0, 4, False, XA_CARDINAL,
+                          &actual_type, &actual_format, &nitems, &bytes_after, &data) == Success) {
+        if (actual_type == XA_CARDINAL && actual_format == 32 && nitems >= 4) {
+            long *vals = (long*)data;
+            for (int i = 0; i < 4; i++) {
+                struts[i] = vals[i];
+                if (vals[i] > 0) has_struts = 1;
+            }
+            XFree(data);
+            return has_struts;
+        }
+        if (data) XFree(data);
+    }
+    
+    return 0;
 }
 // UTILITY FUNCTIONS END
 
@@ -174,7 +256,7 @@ int main(int argc, char *argv[]) {
     screen = DefaultScreen(dpy);
     root = RootWindow(dpy, screen);
     Cursor cursor = XCreateFontCursor(dpy, XC_left_ptr);
-	XDefineCursor(dpy, root, cursor);
+    XDefineCursor(dpy, root, cursor);
     sw = DisplayWidth(dpy, screen);
     sh = DisplayHeight(dpy, screen);
 
@@ -186,7 +268,8 @@ int main(int argc, char *argv[]) {
     
     XSelectInput(dpy, root, 
         SubstructureRedirectMask | SubstructureNotifyMask | 
-        EnterWindowMask | LeaveWindowMask | FocusChangeMask);
+        EnterWindowMask | LeaveWindowMask | FocusChangeMask |
+        StructureNotifyMask);
     
     for (size_t i = 0; i < sizeof(keys)/sizeof(keys[0]); i++) {
         KeyCode code = XKeysymToKeycode(dpy, keys[i].keysym);
@@ -249,13 +332,43 @@ void maprequest(XEvent *e) {
             Atom type = *(Atom*)prop;
             Atom notification = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_NOTIFICATION", False);
             Atom splash = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_SPLASH", False);
+            Atom dock = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DOCK", False);
             XFree(prop);
             
-            if (type == notification || type == splash) {
+            if (type == notification || type == splash || type == dock) {
+                // Check if it's a strut window (panels/docks)
+                long struts[4] = {0};
+                if (get_window_struts(ev->window, struts)) {
+                    StrutWindow *sw = calloc(1, sizeof(StrutWindow));
+                    if (sw) {
+                        sw->win = ev->window;
+                        memcpy(sw->struts, struts, sizeof(struts));
+                        sw->next = strut_windows;
+                        strut_windows = sw;
+                        update_struts();
+                    }
+                }
                 XMapWindow(dpy, ev->window);
+                arrange();
                 return;
             }
         }
+    }
+
+    // Check for strut windows that aren't marked as dock type
+    long struts[4] = {0};
+    if (get_window_struts(ev->window, struts)) {
+        StrutWindow *sw = calloc(1, sizeof(StrutWindow));
+        if (sw) {
+            sw->win = ev->window;
+            memcpy(sw->struts, struts, sizeof(struts));
+            sw->next = strut_windows;
+            strut_windows = sw;
+            update_struts();
+        }
+        XMapWindow(dpy, ev->window);
+        arrange();
+        return;
     }
 
     Client *c = calloc(1, sizeof(Client));
@@ -274,7 +387,8 @@ void maprequest(XEvent *e) {
     XSetWindowBorder(dpy, c->win, border_normal); 
     
     XSelectInput(dpy, c->win, 
-        EnterWindowMask | LeaveWindowMask | FocusChangeMask);
+        EnterWindowMask | LeaveWindowMask | FocusChangeMask |
+        StructureNotifyMask);
     XMapWindow(dpy, c->win);
     focus(c);
     arrange();
@@ -286,6 +400,15 @@ void unmapnotify(XEvent *e) {
     XUnmapEvent *ev = &e->xunmap;
     
     if (ev->send_event) return;
+    
+    // Check for strut window
+    for (StrutWindow *sw = strut_windows; sw; sw = sw->next) {
+        if (sw->win == ev->window) {
+            remove_strut_window(ev->window);
+            arrange();
+            return;
+        }
+    }
     
     Client *found = NULL;
     for (int i = 0; i < 9; i++) {
@@ -313,7 +436,18 @@ void unmapnotify(XEvent *e) {
 }
 
 void destroynotify(XEvent *e) {
-    removeclient(e->xdestroywindow.window);
+    Window win = e->xdestroywindow.window;
+    
+    // Check for strut window
+    for (StrutWindow *sw = strut_windows; sw; sw = sw->next) {
+        if (sw->win == win) {
+            remove_strut_window(win);
+            arrange();
+            return;
+        }
+    }
+    
+    removeclient(win);
 }
 
 void enternotify(XEvent *e) {
@@ -410,6 +544,12 @@ void arrange() {
         XMapWindow(dpy, c->win);
     }
     
+    // Calculate usable area considering struts and padding
+    int x0 = global_strut_left + padding;
+    int y0 = global_strut_top + padding;
+    int usable_w = sw - global_strut_left - global_strut_right - 2 * padding;
+    int usable_h = sh - global_strut_top - global_strut_bottom - 2 * padding;
+
     // Count clients
     int n = 0;
     for (Client *c = workspaces[current_ws]; c; c = c->next) {
@@ -417,13 +557,10 @@ void arrange() {
     }
     if (n == 0) return;
 
-    int usable_w = sw - padding * 2;
-    int usable_h = sh - padding * 2;
-
     // Special case: single window fills entire usable area
     if (n == 1) {
         Client *only = workspaces[current_ws];
-        resize(only, padding, padding, usable_w, usable_h);
+        resize(only, x0, y0, usable_w, usable_h);
         XMapWindow(dpy, only->win);
         if (focused) XRaiseWindow(dpy, focused->win);
         return;
@@ -435,8 +572,8 @@ void arrange() {
 
     Client *master = workspaces[current_ws];
     if (master) {
-        int x = sw - mw - padding;  // master on right
-        int y = padding;
+        int x = x0 + usable_w - mw;  // master on right
+        int y = y0;
         resize(master, x, y, mw, usable_h);
         XMapWindow(dpy, master->win);
     }
@@ -444,11 +581,11 @@ void arrange() {
     // Arrange stack (n-1 windows on left)
     int stack_count = n - 1;
     int th = usable_h / stack_count;
-    int y = padding;
+    int y = y0;
     for (Client *c = workspaces[current_ws]->next; c; c = c->next) {
-        int h = (c->next) ? th : (usable_h - (y - padding));
+        int h = (c->next) ? th : (usable_h - (y - y0));
         if (h < min_window_size) h = min_window_size;
-        resize(c, padding, y, stack_w, h);
+        resize(c, x0, y, stack_w, h);
         XMapWindow(dpy, c->win);
         y += h + padding;
     }
@@ -652,6 +789,12 @@ static void cleanup() {
             free(c);
             c = next;
         }
+    }
+    
+    while (strut_windows) {
+        StrutWindow *next = strut_windows->next;
+        free(strut_windows);
+        strut_windows = next;
     }
 }
 
