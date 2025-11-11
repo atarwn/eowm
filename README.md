@@ -1,4 +1,4 @@
-<img src="/logo.svg" alt="eowm" align="right" width="150"/>
+<img src="logo.svg" alt="eowm" align="right" width="150"/>
 
 `┏┓┏┓┓┏┏┏┳┓`  
 `┗ ┗┛┗┻┛┛┗┗`
