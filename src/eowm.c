@@ -20,6 +20,7 @@ struct Client {
     int x, y, w, h;
     int isfullscreen;
     int workspace;
+    int hidden;
     Client *next;
 };
 
@@ -266,6 +267,7 @@ void maprequest(XEvent *e) {
     c->win = ev->window;
     c->workspace = current_ws;
     c->next = workspaces[current_ws];
+    c->hidden = 0;
     workspaces[current_ws] = c;
     
     XSetWindowBorderWidth(dpy, c->win, border_width);
@@ -286,6 +288,14 @@ void unmapnotify(XEvent *e) {
     if (ev->send_event) return;
     
     Client *found = NULL;
+    for (int i = 0; i < 9; i++) {
+        for (Client *c = workspaces[i]; c; c = c->next) {
+            if (c->win == ev->window && c->hidden) {
+                c->hidden = 0; // Clear flag, ignore event
+                return;
+            }
+        }
+    }
     for (int i = 0; i < 9; i++) {
         for (Client *c = workspaces[i]; c; c = c->next) {
             if (c->win == ev->window) {
@@ -385,6 +395,7 @@ void arrange() {
             // Hide other windows
             for (Client *other = workspaces[current_ws]; other; other = other->next) {
                 if (other != c) {
+                    other->hidden = 1;
                     XUnmapWindow(dpy, other->win);
                 }
             }
@@ -394,6 +405,7 @@ void arrange() {
     
     // No fullscreen windows - ensure all windows have borders and are mapped
     for (Client *c = workspaces[current_ws]; c; c = c->next) {
+        c->hidden = 0;
         XSetWindowBorderWidth(dpy, c->win, border_width);
         XMapWindow(dpy, c->win);
     }
@@ -564,11 +576,13 @@ static void switchws(const Arg *arg) {
     
     // Unmap old workspace windows
     for (Client *c = workspaces[old_ws]; c; c = c->next) {
+        c->hidden = 1;
         XUnmapWindow(dpy, c->win);
     }
     
     // Map current workspace windows
     for (Client *c = workspaces[current_ws]; c; c = c->next) {
+        c->hidden = 0;
         XMapWindow(dpy, c->win);
     }
     
@@ -595,6 +609,7 @@ static void movewin_to_ws(const Arg *arg) {
     // Add to target workspace
     moving->workspace = ws;
     moving->next = workspaces[ws];
+    moving->hidden = 0;
     workspaces[ws] = moving;
     moving->isfullscreen = 0;
     
