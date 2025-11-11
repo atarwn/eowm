@@ -584,6 +584,7 @@ static void switchws(const Arg *arg) {
     for (Client *c = workspaces[current_ws]; c; c = c->next) {
         c->hidden = 0;
         XMapWindow(dpy, c->win);
+        XSetWindowBorder(dpy, c->win, border_normal);
     }
     
     focused = workspaces[current_ws];
