@@ -6,7 +6,9 @@
 #include <unistd.h>
 #include <sys/wait.h>
 #include <stdio.h>
+#include <signal.h>
 
+// CONFIGURATION
 #define MOD Mod1Mask
 #define MASTER_SIZE 0.6
 #define MIN_WIDTH 100
@@ -14,7 +16,9 @@
 #define BORDER_WIDTH 2
 #define MAX_WORKSPACES 9
 #define MAX_STACK_SIZE 512
+// CONFIGURATION END
 
+// STRUCTURES
 typedef struct Client Client;
 struct Client {
     Window win;
@@ -23,8 +27,11 @@ struct Client {
     int workspace;
     Client *next;
 };
-typedef void (*CmdFunc)(void);
 
+typedef void (*CmdFunc)(void);
+// STRUCTURES END
+
+// GLOBAL VARIABLES
 static Display *dpy;
 static Window root;
 static Client *focused = NULL;
@@ -34,27 +41,18 @@ static double master_size = MASTER_SIZE;
 static Client *workspaces[MAX_WORKSPACES] = {NULL};
 static int current_ws = 0;
 static unsigned long border_normal, border_focused;
+// GLOBAL VARIABLES END
 
-// Event handlers
+// FUNCTION DECLARATIONS
+//   Event handlers
 static void buttonpress(XEvent *e);
 static void configurerequest(XEvent *e);
 static void maprequest(XEvent *e);
-// static void unmapnotify(XEvent *e); // bug
 static void destroynotify(XEvent *e);
 static void enternotify(XEvent *e);
 static void keypress(XEvent *e);
 
-static void (*handlers[LASTEvent])(XEvent *) = {
-    [ButtonPress] = buttonpress,
-    [ConfigureRequest] = configurerequest,
-    [MapRequest] = maprequest,
-    // [UnmapNotify] = unmapnotify, // bug
-    [DestroyNotify] = destroynotify,
-    [EnterNotify] = enternotify,
-    [KeyPress] = keypress
-};
-
-// Helper functions
+//   Helper functions
 static void focus(Client *c);
 static void arrange();
 static void resize(Client *c, int x, int y, int w, int h);
@@ -72,8 +70,23 @@ static void fullscreen();
 static void quit();
 static void spawn(const char *cmd);
 static void cleanup();
+static void removeclient(Window win);
+static int get_stack_clients(Client *stack[], int max);
+static void move_in_stack(int delta);
+// FUNCTION DECLARATIONS END
 
-// Define the workspace functions
+// EVENT HANDLERS
+static void (*handlers[LASTEvent])(XEvent *) = {
+    [ButtonPress] = buttonpress,
+    [ConfigureRequest] = configurerequest,
+    [MapRequest] = maprequest,
+    [DestroyNotify] = destroynotify,
+    [EnterNotify] = enternotify,
+    [KeyPress] = keypress
+};
+// EVENT HANDLERS END
+
+// WORKSPACE MACROS AND FUNCTIONS
 #define WS_FUNC(n) \
     static void ws##n() { switchws((n)-1); } \
     static void movews##n() { movewin_to_ws((n)-1); }
@@ -84,12 +97,12 @@ WS_FUNC(9)
 
 #undef WS_FUNC
 
-// Workspaces macros
 #define WS_KEY(n) \
     { XK_##n, MOD, (CmdFunc)ws##n, NULL }, \
     { XK_##n, MOD | ShiftMask, (CmdFunc)movews##n, NULL },
+// WORKSPACE MACROS AND FUNCTIONS END
 
-// Key bindings
+// KEY BINDINGS
 static struct {
     KeySym keysym;
     unsigned int mod;
@@ -120,7 +133,9 @@ static struct {
 };
 
 #undef WS_KEY
+// KEY BINDINGS END
 
+// UTILITY FUNCTIONS
 static void setup_colors(void) {
     Colormap cmap = DefaultColormap(dpy, screen);
     XColor color;
@@ -145,7 +160,9 @@ static int xerrorHandler(Display *dpy, XErrorEvent *ee) {
     fprintf(stderr, "X Error: %s\n", msg);
     return 0;
 }
+// UTILITY FUNCTIONS END
 
+// MAIN FUNCTION
 int main() {
     XEvent ev;
     if (!(dpy = XOpenDisplay(NULL))) {
@@ -179,7 +196,9 @@ int main() {
             handlers[ev.type](&ev);
     }
 }
+// MAIN FUNCTION END
 
+// EVENT HANDLER IMPLEMENTATIONS
 void buttonpress(XEvent *e) {
     XButtonPressedEvent *be = &e->xbutton;
     for (Client *c = workspaces[current_ws]; c; c = c->next) {
@@ -229,29 +248,6 @@ void maprequest(XEvent *e) {
     arrange();
 }
 
-static void removeclient(Window win) {
-    Client *c, **prev;
-    for (prev = &workspaces[current_ws]; (c = *prev); prev = &c->next) {
-        if (c->win == win) {
-            int was_focused = (focused == c);
-            *prev = c->next;
-            free(c);
-            
-            if (!workspaces[current_ws]) {
-                focused = NULL;
-            } else if (was_focused) {
-                focus(workspaces[current_ws]);
-            }
-            arrange();
-            break;
-        }
-    }
-}
-
-// void unmapnotify(XEvent *e) { // bug
-//     removeclient(e->xunmap.window);
-// }
-
 void destroynotify(XEvent *e) {
     removeclient(e->xdestroywindow.window);
 }
@@ -283,6 +279,27 @@ void keypress(XEvent *e) {
         }
     }
 }
+// EVENT HANDLER IMPLEMENTATIONS END
+
+// CLIENT MANAGEMENT FUNCTIONS
+static void removeclient(Window win) {
+    Client *c, **prev;
+    for (prev = &workspaces[current_ws]; (c = *prev); prev = &c->next) {
+        if (c->win == win) {
+            int was_focused = (focused == c);
+            *prev = c->next;
+            free(c);
+            
+            if (!workspaces[current_ws]) {
+                focused = NULL;
+            } else if (was_focused) {
+                focus(workspaces[current_ws]);
+            }
+            arrange();
+            break;
+        }
+    }
+}
 
 void focus(Client *c) {
     if (!c) return;
@@ -293,6 +310,14 @@ void focus(Client *c) {
     XSetWindowBorder(dpy, c->win, border_focused);
     XRaiseWindow(dpy, c->win);
     XSetInputFocus(dpy, c->win, RevertToPointerRoot, CurrentTime);
+}
+
+static void resize(Client *c, int x, int y, int w, int h) {
+    c->x = x;
+    c->y = y;
+    c->w = w;
+    c->h = h;
+    XMoveResizeWindow(dpy, c->win, x, y, w - 2 * BORDER_WIDTH, h - 2 * BORDER_WIDTH);
 }
 
 void arrange() {
@@ -368,15 +393,9 @@ void arrange() {
         XRaiseWindow(dpy, focused->win);
     }
 }
+// CLIENT MANAGEMENT FUNCTIONS END
 
-static void resize(Client *c, int x, int y, int w, int h) {
-    c->x = x;
-    c->y = y;
-    c->w = w;
-    c->h = h;
-    XMoveResizeWindow(dpy, c->win, x, y, w - 2 * BORDER_WIDTH, h - 2 * BORDER_WIDTH);
-}
-
+// WINDOW MANAGEMENT FUNCTIONS
 void killclient() {
     if (focused) XKillClient(dpy, focused->win);
 }
@@ -481,7 +500,9 @@ static void move_in_stack(int delta) {
 
 void movewinup()   { move_in_stack(-1); }
 void movewindown() { move_in_stack(+1); }
+// WINDOW MANAGEMENT FUNCTIONS END
 
+// WORKSPACE MANAGEMENT FUNCTIONS
 static void switchws(int ws) {
     if (ws < 0 || ws >= MAX_WORKSPACES || ws == current_ws) return;
     
@@ -532,7 +553,9 @@ static void movewin_to_ws(int ws) {
     
     arrange();
 }
+// WORKSPACE MANAGEMENT FUNCTIONS END
 
+// SPECIAL WINDOW FUNCTIONS
 void fullscreen() {
     if (!focused) return;
     
@@ -548,7 +571,9 @@ void fullscreen() {
         arrange();  // arrange() handles hiding others and setting up fullscreen
     }
 }
+// SPECIAL WINDOW FUNCTIONS END
 
+// SYSTEM FUNCTIONS
 static void cleanup() {
     for (int i = 0; i < MAX_WORKSPACES; i++) {
         Client *c = workspaces[i];
@@ -580,3 +605,4 @@ void spawn(const char *cmd) {
         exit(1);
     }
 }
+// SYSTEM FUNCTIONS END
