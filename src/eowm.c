@@ -53,6 +53,7 @@ static Atom wm_protocols, wm_delete_window, wm_state, wm_take_focus;
 static void buttonpress(XEvent *e);
 static void configurerequest(XEvent *e);
 static void maprequest(XEvent *e);
+static void unmapnotify(XEvent *e);
 static void destroynotify(XEvent *e);
 static void enternotify(XEvent *e);
 static void keypress(XEvent *e);
@@ -88,6 +89,7 @@ static void (*handlers[LASTEvent])(XEvent *) = {
     [ButtonPress] = buttonpress,
     [ConfigureRequest] = configurerequest,
     [MapRequest] = maprequest,
+    [UnmapNotify] = unmapnotify,
     [DestroyNotify] = destroynotify,
     [EnterNotify] = enternotify,
     [KeyPress] = keypress
@@ -242,6 +244,30 @@ void maprequest(XEvent *e) {
     XMapWindow(dpy, c->win);
     focus(c);
     arrange();
+}
+
+static void unmapnotify(XEvent *e);
+
+void unmapnotify(XEvent *e) {
+    XUnmapEvent *ev = &e->xunmap;
+    
+    if (ev->send_event) return;
+    
+    Client *found = NULL;
+    for (int i = 0; i < 9; i++) {
+        for (Client *c = workspaces[i]; c; c = c->next) {
+            if (c->win == ev->window) {
+                found = c;
+                break;
+            }
+        }
+        if (found) break;
+    }
+    if (found && found->workspace != current_ws) return;
+    
+    if (found) {
+        removeclient(ev->window);
+    }
 }
 
 void destroynotify(XEvent *e) {
