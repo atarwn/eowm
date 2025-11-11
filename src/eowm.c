@@ -268,9 +268,13 @@ int main(int argc, char *argv[]) {
     setup_icccm();
     
     XSelectInput(dpy, root, 
-        SubstructureRedirectMask | SubstructureNotifyMask | 
-        EnterWindowMask | LeaveWindowMask | FocusChangeMask |
-        StructureNotifyMask);
+        SubstructureRedirectMask | 
+        SubstructureNotifyMask | 
+        EnterWindowMask | 
+        LeaveWindowMask | 
+        FocusChangeMask |
+        StructureNotifyMask |
+        PropertyChangeMask);
     
     for (size_t i = 0; i < sizeof(keys)/sizeof(keys[0]); i++) {
         KeyCode code = XKeysymToKeycode(dpy, keys[i].keysym);
@@ -836,8 +840,15 @@ void fullscreen(const Arg *arg) {
     if (focused->isfullscreen) {
         // Exit fullscreen
         focused->isfullscreen = 0;
+        
         XSetWindowBorderWidth(dpy, focused->win, border_width);
         XSetWindowBorder(dpy, focused->win, border_focused);
+        
+        for (Client *c = workspaces[current_ws]; c; c = c->next) {
+            c->hidden = 0;
+            XMapWindow(dpy, c->win);
+        }
+        
         arrange();
     } else {
         // Enter fullscreen
