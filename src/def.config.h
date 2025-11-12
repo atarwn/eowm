@@ -23,8 +23,14 @@ static Key keys[] = {
     { MOD,	XK_f,	fullscreen,	{0} },
     { MOD,	XK_q,	killclient,	{0} },
     { MOD,	XK_c,	quit,	{0} },
-    { MOD|ShiftMask, XK_j, movewin, {.i = 1} },
+
+    { MOD|ShiftMask, XK_j, movewin, {.i = +1} },
     { MOD|ShiftMask, XK_k, movewin, {.i = -1} },
+
+    { MOD,          XK_comma,   focusmon,   {.i = -1} },
+    { MOD,          XK_period,  focusmon,   {.i = +1} },
+    { MOD|ShiftMask, XK_comma,  tagmon,     {.i = -1} },
+    { MOD|ShiftMask, XK_period, tagmon,     {.i = +1} },
 
     // Master window
     { MOD,	XK_h,	incmaster,	{0} },
