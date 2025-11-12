@@ -14,13 +14,28 @@
 #include <stdarg.h>
 
 // STRUCTURES
+// GLOBAL VARIABLES
+// FUNCTION DECLARATIONS
+// CONFIGURATION
+// EVENT HANDLERS
+// UTILITY FUNCTIONS
+// MAIN FUNCTION
+// EVENT HANDLER IMPLEMENTATIONS
+// CLIENT MANAGEMENT FUNCTIONS
+// WINDOW MANAGEMENT FUNCTIONS
+// WORKSPACE MANAGEMENT FUNCTIONS
+// SPECIAL WINDOW FUNCTIONS
+// SYSTEM FUNCTIONS
+
+// STRUCTURES
 typedef struct Client Client;
 struct Client {
     Window win;
     int x, y, w, h;
-    int isfullscreen;
     int workspace;
-    int hidden;
+    int isfullscreen;
+    int ishidden;
+    int isfloating;
     Client *next;
 };
 
@@ -408,10 +423,35 @@ void maprequest(XEvent *e) {
             if (parent) break;
         }
         
-        // Show dialogs without adding them to the list of managed windows
-        // (they are managed by their parent window)
-        XMapWindow(dpy, ev->window);
-        XRaiseWindow(dpy, ev->window);
+        // Add dialog as a managed floating window
+        Client *c = calloc(1, sizeof(Client));
+        if (!c) {
+            fprintf(stderr, "Failed to allocate client\n");
+            return;
+        }
+
+        c->win = ev->window;
+        c->workspace = current_ws;
+        c->isfloating = 1;
+        c->isfullscreen = 0;
+        c->ishidden = 0;
+        
+        // Add to workspace list
+        c->next = workspaces[current_ws];
+        workspaces[current_ws] = c;
+        
+        XSetWindowBorderWidth(dpy, c->win, border_width);
+        XSetWindowBorder(dpy, c->win, border_normal);
+        
+        XSelectInput(dpy, c->win, 
+            EnterWindowMask | 
+            LeaveWindowMask | 
+            FocusChangeMask |
+            StructureNotifyMask);
+        
+        XMapWindow(dpy, c->win);
+        XRaiseWindow(dpy, c->win);
+        focus(c);
         return;
     }
 
@@ -424,8 +464,9 @@ void maprequest(XEvent *e) {
     c->win = ev->window;
     c->workspace = current_ws;
     c->next = workspaces[current_ws];
-    c->hidden = 0;
+    c->ishidden = 0;
     c->isfullscreen = 0;
+    c->isfloating = 0;
     workspaces[current_ws] = c;
     
     XSetWindowBorderWidth(dpy, c->win, border_width);
@@ -469,7 +510,7 @@ void unmapnotify(XEvent *e) {
 
     if (!found) return;
     
-    if (found->hidden) return;
+    if (found->ishidden) return;
     
     if (found_ws != current_ws) return;
 
@@ -548,7 +589,7 @@ static void removeclient(Window win) {
 void focus(Client *c) {
     if (!c) return;
 
-    if (c->hidden || c->workspace != current_ws) return;
+    if (c->ishidden || c->workspace != current_ws) return;
 
     // Exists?
     XWindowAttributes wa;
@@ -585,7 +626,7 @@ void arrange() {
             // Hide other windows
             for (Client *other = workspaces[current_ws]; other; other = other->next) {
                 if (other != c) {
-                    other->hidden = 1;
+                    other->ishidden = 1;
                     XUnmapWindow(dpy, other->win);
                 }
             }
@@ -595,7 +636,7 @@ void arrange() {
     
     // No fullscreen windows - ensure all windows have borders and are mapped
     for (Client *c = workspaces[current_ws]; c; c = c->next) {
-        c->hidden = 0;
+        c->ishidden = 0;
         XSetWindowBorderWidth(dpy, c->win, border_width);
         XMapWindow(dpy, c->win);
     }
@@ -606,44 +647,72 @@ void arrange() {
     int usable_w = sw - global_strut_left - global_strut_right - 2 * padding;
     int usable_h = sh - global_strut_top - global_strut_bottom - 2 * padding;
 
-    // Count clients
+    // Count tiled clients (non-floating)
     int n = 0;
     for (Client *c = workspaces[current_ws]; c; c = c->next) {
-        n++;
+        if (!c->isfloating) n++;
     }
-    if (n == 0) return;
 
-    // Special case: single window fills entire usable area
+    // Arrange tiled windows
     if (n == 1) {
-        Client *only = workspaces[current_ws];
-        resize(only, x0, y0, usable_w, usable_h);
-        XMapWindow(dpy, only->win);
-        if (focused) XRaiseWindow(dpy, focused->win);
-        return;
+        // ИЗМЕНИТЬ: найти единственное тайловое окно
+        Client *only = NULL;
+        for (Client *c = workspaces[current_ws]; c; c = c->next) {
+            if (!c->isfloating) {
+                only = c;
+                break;
+            }
+        }
+        if (only) {
+            resize(only, x0, y0, usable_w, usable_h);
+            XMapWindow(dpy, only->win);
+        }
+    } else if (n >= 2) {
+        // Normal master-stack layout
+        int mw = (int)(usable_w * master_size);
+        int stack_w = usable_w - mw - padding;
+
+        // Find master (first non-floating)
+        Client *master = NULL;
+        for (Client *c = workspaces[current_ws]; c; c = c->next) {
+            if (!c->isfloating) {
+                master = c;
+                break;
+            }
+        }
+        
+        if (master) {
+            int x = x0 + usable_w - mw;
+            int y = y0;
+            resize(master, x, y, mw, usable_h);
+            XMapWindow(dpy, master->win);
+        }
+
+        // Arrange stack (remaining non-floating windows)
+        int stack_count = n - 1;
+        if (stack_count > 0) {
+            int th = usable_h / stack_count;
+            int y = y0;
+            int stacked = 0;
+            
+            for (Client *c = workspaces[current_ws]; c; c = c->next) {
+                if (c->isfloating || c == master) continue;
+                
+                stacked++;
+                int h = (stacked < stack_count) ? th : (usable_h - (y - y0));
+                if (h < min_window_size) h = min_window_size;
+                resize(c, x0, y, stack_w, h);
+                XMapWindow(dpy, c->win);
+                y += h + padding;
+            }
+        }
     }
 
-    // Normal master-stack layout for n >= 2
-    int mw = (int)(usable_w * master_size);
-    int stack_w = usable_w - mw - padding;
-
-    Client *master = workspaces[current_ws];
-    if (master) {
-        int x = x0 + usable_w - mw;  // master on right
-        int y = y0;
-        resize(master, x, y, mw, usable_h);
-        XMapWindow(dpy, master->win);
-    }
-
-    // Arrange stack (n-1 windows on left)
-    int stack_count = n - 1;
-    int th = usable_h / stack_count;
-    int y = y0;
-    for (Client *c = workspaces[current_ws]->next; c; c = c->next) {
-        int h = (c->next) ? th : (usable_h - (y - y0));
-        if (h < min_window_size) h = min_window_size;
-        resize(c, x0, y, stack_w, h);
-        XMapWindow(dpy, c->win);
-        y += h + padding;
+    // Raise floating windows above tiled
+    for (Client *c = workspaces[current_ws]; c; c = c->next) {
+        if (c->isfloating) {
+            XRaiseWindow(dpy, c->win);
+        }
     }
 
     if (focused) {
@@ -709,7 +778,7 @@ void decmaster(const Arg *arg) {
 // Required by nextwin & prevwin
 static int can_focus(Client *c) {
     if (!c) return 0;
-    if (c->hidden || c->workspace != current_ws) return 0;
+    if (c->ishidden || c->workspace != current_ws) return 0;
     
     XWindowAttributes wa;
     if (!XGetWindowAttributes(dpy, c->win, &wa)) return 0;
@@ -812,13 +881,13 @@ static void switchws(const Arg *arg) {
     
     // Unmap old workspace windows
     for (Client *c = workspaces[old_ws]; c; c = c->next) {
-        c->hidden = 1;
+        c->ishidden = 1;
         XUnmapWindow(dpy, c->win);
     }
     
     // Map current workspace windows
     for (Client *c = workspaces[current_ws]; c; c = c->next) {
-        c->hidden = 0;
+        c->ishidden = 0;
         XMapWindow(dpy, c->win);
         XSetWindowBorder(dpy, c->win, border_normal);
     }
@@ -851,7 +920,7 @@ static void movewin_to_ws(const Arg *arg) {
     // Add to target workspace
     moving->workspace = ws;
     moving->next = workspaces[ws];
-    moving->hidden = 0;
+    moving->ishidden = 0;
     workspaces[ws] = moving;
     moving->isfullscreen = 0;
     
@@ -878,7 +947,7 @@ void fullscreen(const Arg *arg) {
         XSetWindowBorder(dpy, focused->win, border_focused);
         
         for (Client *c = workspaces[current_ws]; c; c = c->next) {
-            c->hidden = 0;
+            c->ishidden = 0;
             XMapWindow(dpy, c->win);
             focus(focused);
         }
