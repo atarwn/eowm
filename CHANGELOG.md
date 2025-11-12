@@ -1,3 +1,8 @@
+dev -> "Technetium"
+-------------------
+ * XRandR for multiple monitors!
+ * Still under 1000 LOC
+
 1.4 -> "Evolutionize"
 ---------------------
  * Fix sereval bugs
