@@ -25,6 +25,10 @@ static Key keys[] = {
     { MOD,	XK_c,	quit,	{0} },
     { MOD|ShiftMask, XK_j, movewin, {.i = 1} },
     { MOD|ShiftMask, XK_k, movewin, {.i = -1} },
+    { MOD,           XK_u,    focus_monitor,      {.i = -1} },  // prev monitor
+    { MOD,           XK_i,    focus_monitor,      {.i = 1} },   // next monitor
+    { MOD|ShiftMask, XK_u,    movewin_to_monitor, {.i = -1} },  // move window to prev
+    { MOD|ShiftMask, XK_i,    movewin_to_monitor, {.i = 1} },   // move window to next
 
     // Master window
     { MOD,	XK_h,	incmaster,	{0} },
