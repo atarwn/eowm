@@ -5,7 +5,6 @@
 // #include <X11/XF86keysym.h>
 #include <X11/Xatom.h>
 #include <X11/cursorfont.h>
-#include <X11/extensions/Xrandr.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/wait.h>
@@ -19,25 +18,16 @@ struct Client {
     Window win;
     int x, y, w, h;
     int workspace;
-    int monitor;
     int isfullscreen;
     int ishidden;
     int isfloating;
     Client *next;
 };
 
-typedef struct Monitor Monitor;
-struct Monitor {
-    int num;
-    int x, y, w, h;
-    int workspace;
-    Monitor *next;
-};
-
 typedef struct StrutWindow StrutWindow;
 struct StrutWindow {
     Window win;
-    long struts[4];
+    long struts[4]; // left, right, top, bottom
     StrutWindow *next;
 };
 
@@ -57,7 +47,7 @@ static Display *dpy;
 static Window root;
 static Client *focused = NULL;
 static int screen;
-static int sw, sh;
+static int sw, sh; // screen width/height
 static double master_size;
 static Client *workspaces[9] = {NULL};
 static Client *last_focused[9] = {NULL};
@@ -70,9 +60,6 @@ static int global_strut_left = 0;
 static int global_strut_right = 0;
 static int global_strut_top = 0;
 static int global_strut_bottom = 0;
-static Monitor *monitors = NULL;
-static Monitor *current_monitor = NULL;
-static int randr_event_base = 0;
 
 static void buttonpress(XEvent *e);
 static void configurerequest(XEvent *e);
@@ -81,7 +68,7 @@ static void unmapnotify(XEvent *e);
 static void destroynotify(XEvent *e);
 static void enternotify(XEvent *e);
 static void keypress(XEvent *e);
-static void randrnotify(XEvent *e);
+
 static void focus(Client *c);
 static void arrange(void);
 static void scan(void);
@@ -93,6 +80,7 @@ static void die(const char *fmt, ...);
 static void update_struts(void);
 static void remove_strut_window(Window win);
 static int get_window_struts(Window win, long struts[4]);
+
 static void killclient(const Arg *arg);
 static void togglemaster(const Arg *arg);
 static void incmaster(const Arg *arg);
@@ -106,10 +94,6 @@ static void fullscreen(const Arg *arg);
 static void quit(const Arg *arg);
 static void spawn(const Arg *arg);
 static void cleanup(void);
-static void update_monitors(void);
-static Monitor* monitor_at(int x, int y);
-static void focusmon(const Arg *arg);
-static void tagmon(const Arg *arg);
 
 #include "config.h"
 
@@ -122,12 +106,6 @@ static void (*handlers[LASTEvent])(XEvent *) = {
     [EnterNotify] = enternotify,
     [KeyPress] = keypress
 };
-
-static void handle_randr_event(XEvent *e) {
-    if (e->type == randr_event_base + RRScreenChangeNotify) {
-        randrnotify(e);
-    }
-}
 
 static void setup_colors(void) {
     Colormap cmap = DefaultColormap(dpy, screen);
@@ -168,78 +146,6 @@ static void setup_icccm(void) {
     wm_take_focus = XInternAtom(dpy, "WM_TAKE_FOCUS", False);
     net_wm_strut = XInternAtom(dpy, "_NET_WM_STRUT", False);
     net_wm_strut_partial = XInternAtom(dpy, "_NET_WM_STRUT_PARTIAL", False);
-}
-
-static void update_monitors(void) {
-    while (monitors) {
-        Monitor *next = monitors->next;
-        free(monitors);
-        monitors = next;
-    }
-    
-    int error_base;
-    if (!XRRQueryExtension(dpy, &randr_event_base, &error_base)) {
-        Monitor *m = calloc(1, sizeof(Monitor));
-        m->num = 0;
-        m->x = 0;
-        m->y = 0;
-        m->w = sw;
-        m->h = sh;
-        m->workspace = 0;
-        monitors = current_monitor = m;
-        return;
-    }
-    
-    XRRScreenResources *sr = XRRGetScreenResources(dpy, root);
-    if (!sr) return;
-    
-    Monitor *tail = NULL;
-    int mon_num = 0;
-    
-    for (int i = 0; i < sr->ncrtc; i++) {
-        XRRCrtcInfo *ci = XRRGetCrtcInfo(dpy, sr, sr->crtcs[i]);
-        if (!ci || ci->noutput == 0 || ci->width == 0 || ci->height == 0) {
-            if (ci) XRRFreeCrtcInfo(ci);
-            continue;
-        }
-        
-        Monitor *m = calloc(1, sizeof(Monitor));
-        m->num = mon_num++;
-        m->x = ci->x;
-        m->y = ci->y;
-        m->w = ci->width;
-        m->h = ci->height;
-        m->workspace = current_ws;
-        
-        if (!monitors) {
-            monitors = current_monitor = m;
-        } else {
-            tail->next = m;
-        }
-        tail = m;
-        
-        XRRFreeCrtcInfo(ci);
-    }
-    
-    XRRFreeScreenResources(sr);
-    if (!monitors) {
-        Monitor *m = calloc(1, sizeof(Monitor));
-        m->num = 0;
-        m->x = 0;
-        m->y = 0;
-        m->w = sw;
-        m->h = sh;
-        m->workspace = 0;
-        monitors = current_monitor = m;
-    }
-}
-
-static Monitor* monitor_at(int x, int y) {
-    for (Monitor *m = monitors; m; m = m->next) {
-        if (x >= m->x && x < m->x + m->w && y >= m->y && y < m->y + m->h)
-            return m;
-    }
-    return monitors;
 }
 
 void die(const char *fmt, ...) {
@@ -321,7 +227,6 @@ static Client* create_client(Window win, int floating) {
     if (!c) return NULL;
     c->win = win;
     c->workspace = current_ws;
-    c->monitor = current_monitor ? current_monitor->num : 0;
     c->isfloating = floating;
     c->next = workspaces[current_ws];
     workspaces[current_ws] = c;
@@ -358,12 +263,10 @@ int main(int argc, char *argv[]) {
     setup_colors();
     setrootbackground();
     setup_icccm();
-    update_monitors();
     
     XSelectInput(dpy, root, SubstructureRedirectMask | SubstructureNotifyMask | 
-                 EnterWindowMask | LeaveWindowMask | FocusChangeMask |
-                 StructureNotifyMask | PropertyChangeMask);
-    XRRSelectInput(dpy, root, RRScreenChangeNotifyMask);
+                            EnterWindowMask | LeaveWindowMask | FocusChangeMask |
+                            StructureNotifyMask | PropertyChangeMask);
     
     for (size_t i = 0; i < sizeof(keys)/sizeof(keys[0]); i++) {
         KeyCode code = XKeysymToKeycode(dpy, keys[i].keysym);
@@ -373,11 +276,8 @@ int main(int argc, char *argv[]) {
     scan();
     while (1) {
         XNextEvent(dpy, &ev);
-        if (ev.type >= randr_event_base) {
-            handle_randr_event(&ev);
-        } else if (handlers[ev.type]) {
+        if (handlers[ev.type])
             handlers[ev.type](&ev);
-        }
     }
 }
 
@@ -528,14 +428,6 @@ void keypress(XEvent *e) {
     }
 }
 
-void randrnotify(XEvent *e) {
-    XRRUpdateConfiguration(e);
-    sw = DisplayWidth(dpy, screen);
-    sh = DisplayHeight(dpy, screen);
-    update_monitors();
-    arrange();
-}
-
 static void removeclient(Window win) {
     Client *c, **prev;
     for (prev = &workspaces[current_ws]; (c = *prev); prev = &c->next) {
@@ -574,17 +466,16 @@ static void resize(Client *c, int x, int y, int w, int h) {
 }
 
 void arrange() {
-    if (!workspaces[current_ws] || !current_monitor) return;
+    if (!workspaces[current_ws]) return;
     
     for (Client *c = workspaces[current_ws]; c; c = c->next) {
-        if (c->isfullscreen && c->monitor == current_monitor->num) {
+        if (c->isfullscreen) {
             XSetWindowBorderWidth(dpy, c->win, 0);
-            resize(c, current_monitor->x, current_monitor->y, 
-                   current_monitor->w, current_monitor->h);
+            resize(c, 0, 0, sw, sh);
             XMapWindow(dpy, c->win);
             XRaiseWindow(dpy, c->win);
             for (Client *other = workspaces[current_ws]; other; other = other->next) {
-                if (other != c && other->monitor == current_monitor->num) {
+                if (other != c) {
                     other->ishidden = 1;
                     XUnmapWindow(dpy, other->win);
                 }
@@ -593,65 +484,59 @@ void arrange() {
         }
     }
     
-    for (Monitor *m = monitors; m; m = m->next) {
-        if (m->workspace != current_ws) continue;
-        
+    for (Client *c = workspaces[current_ws]; c; c = c->next) {
+        c->ishidden = 0;
+        XSetWindowBorderWidth(dpy, c->win, border_width);
+        XMapWindow(dpy, c->win);
+    }
+    
+    int x0 = global_strut_left + padding;
+    int y0 = global_strut_top + padding;
+    int usable_w = sw - global_strut_left - global_strut_right - 2 * padding;
+    int usable_h = sh - global_strut_top - global_strut_bottom - 2 * padding;
+
+    int n = 0;
+    for (Client *c = workspaces[current_ws]; c; c = c->next)
+        if (!c->isfloating) n++;
+
+    if (n == 1) {
         for (Client *c = workspaces[current_ws]; c; c = c->next) {
-            if (c->monitor == m->num) {
-                c->ishidden = 0;
-                XSetWindowBorderWidth(dpy, c->win, border_width);
+            if (!c->isfloating) {
+                resize(c, x0, y0, usable_w, usable_h);
                 XMapWindow(dpy, c->win);
+                break;
+            }
+        }
+    } else if (n >= 2) {
+        int mw = (int)(usable_w * master_size);
+        int stack_w = usable_w - mw - padding;
+
+        Client *master = NULL;
+        for (Client *c = workspaces[current_ws]; c; c = c->next) {
+            if (!c->isfloating) {
+                master = c;
+                break;
             }
         }
         
-        int x0 = m->x + global_strut_left + padding;
-        int y0 = m->y + global_strut_top + padding;
-        int usable_w = m->w - global_strut_left - global_strut_right - 2 * padding;
-        int usable_h = m->h - global_strut_top - global_strut_bottom - 2 * padding;
+        if (master) {
+            resize(master, x0 + usable_w - mw, y0, mw, usable_h);
+            XMapWindow(dpy, master->win);
+        }
 
-        int n = 0;
-        for (Client *c = workspaces[current_ws]; c; c = c->next)
-            if (!c->isfloating && c->monitor == m->num) n++;
-
-        if (n == 1) {
+        int stack_count = n - 1;
+        if (stack_count > 0) {
+            int th = usable_h / stack_count;
+            int y = y0;
+            int stacked = 0;
             for (Client *c = workspaces[current_ws]; c; c = c->next) {
-                if (!c->isfloating && c->monitor == m->num) {
-                    resize(c, x0, y0, usable_w, usable_h);
-                    XMapWindow(dpy, c->win);
-                    break;
-                }
-            }
-        } else if (n >= 2) {
-            int mw = (int)(usable_w * master_size);
-            int stack_w = usable_w - mw - padding;
-
-            Client *master = NULL;
-            for (Client *c = workspaces[current_ws]; c; c = c->next) {
-                if (!c->isfloating && c->monitor == m->num) {
-                    master = c;
-                    break;
-                }
-            }
-            
-            if (master) {
-                resize(master, x0 + usable_w - mw, y0, mw, usable_h);
-                XMapWindow(dpy, master->win);
-            }
-
-            int stack_count = n - 1;
-            if (stack_count > 0) {
-                int th = usable_h / stack_count;
-                int y = y0;
-                int stacked = 0;
-                for (Client *c = workspaces[current_ws]; c; c = c->next) {
-                    if (c->isfloating || c == master || c->monitor != m->num) continue;
-                    stacked++;
-                    int h = (stacked < stack_count) ? th : (usable_h - (y - y0));
-                    if (h < min_window_size) h = min_window_size;
-                    resize(c, x0, y, stack_w, h);
-                    XMapWindow(dpy, c->win);
-                    y += h + padding;
-                }
+                if (c->isfloating || c == master) continue;
+                stacked++;
+                int h = (stacked < stack_count) ? th : (usable_h - (y - y0));
+                if (h < min_window_size) h = min_window_size;
+                resize(c, x0, y, stack_w, h);
+                XMapWindow(dpy, c->win);
+                y += h + padding;
             }
         }
     }
@@ -869,70 +754,5 @@ void spawn(const Arg *arg) {
         execl("/bin/sh", "sh", "-c", arg->cmd, (char *)NULL);
         fprintf(stderr, "Exec failed\n");
         exit(1);
-    }
-}
-
-void focusmon(const Arg *arg) {
-    if (!monitors || !monitors->next) return;
-    
-    Monitor *target = NULL;
-    if (arg->i > 0) {
-        target = current_monitor->next ? current_monitor->next : monitors;
-    } else {
-        for (Monitor *m = monitors; m; m = m->next) {
-            if (m->next == current_monitor) {
-                target = m;
-                break;
-            }
-        }
-        if (!target) {
-            for (target = monitors; target->next; target = target->next);
-        }
-    }
-    
-    if (target && target != current_monitor) {
-        current_monitor = target;
-        current_ws = target->workspace;
-        
-        for (Client *c = workspaces[current_ws]; c; c = c->next) {
-            if (c->monitor == current_monitor->num && !c->ishidden) {
-                focus(c);
-                arrange();
-                return;
-            }
-        }
-        arrange();
-    }
-}
-
-void tagmon(const Arg *arg) {
-    if (!focused || !monitors || !monitors->next) return;
-    
-    Monitor *target = NULL;
-    if (arg->i > 0) {
-        target = current_monitor->next ? current_monitor->next : monitors;
-    } else {
-        for (Monitor *m = monitors; m; m = m->next) {
-            if (m->next == current_monitor) {
-                target = m;
-                break;
-            }
-        }
-        if (!target) {
-            for (target = monitors; target->next; target = target->next);
-        }
-    }
-    
-    if (target && target != current_monitor) {
-        focused->monitor = target->num;
-        arrange();
-        
-        focused = NULL;
-        for (Client *c = workspaces[current_ws]; c; c = c->next) {
-            if (c->monitor == current_monitor->num && !c->ishidden) {
-                focus(c);
-                break;
-            }
-        }
     }
 }

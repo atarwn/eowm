@@ -4,7 +4,7 @@ CFLAGS ?= -O2 -Wall
 PREFIX ?= /usr/local
 
 $(TARGET): src/config.h
-	$(CC) $(CFLAGS) src/eowm.c -o $@ -lX11 -lXrandr
+	$(CC) $(CFLAGS) src/eowm.c -o $@ -lX11
 
 src/config.h:
 	cp src/def.config.h src/config.h
