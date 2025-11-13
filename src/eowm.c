@@ -725,15 +725,10 @@ static void arrange_monitor(Monitor *mon) {
         int stack_w = usable_w - mw - padding;
 
         Client *master = NULL;
-        if (mon == current_monitor && focused && !focused->isfloating && 
-            get_monitor_for_window(focused) == mon) {
-            master = focused;
-        } else {
-            for (Client *c = workspaces[current_ws]; c; c = c->next) {
-                if (!c->isfloating && get_monitor_for_window(c) == mon) {
-                    master = c;
-                    break;
-                }
+        for (Client *c = workspaces[current_ws]; c; c = c->next) {
+            if (!c->isfloating && get_monitor_for_window(c) == mon) {
+                master = c;
+                break;
             }
         }
         
@@ -783,12 +778,17 @@ void killclient(const Arg *arg) {
 }
 
 void togglemaster(const Arg *arg) {
-    if (!workspaces[current_ws] || !workspaces[current_ws]->next) return;
-    Client *first = workspaces[current_ws];
-    Client *second = workspaces[current_ws]->next;
-    first->next = second->next;
-    second->next = first;
-    workspaces[current_ws] = second;
+    if (!focused || !workspaces[current_ws] || focused == workspaces[current_ws])
+        return;
+
+    Client **prev = &workspaces[current_ws];
+    while (*prev && *prev != focused)
+        prev = &(*prev)->next;
+    if (*prev) {
+        *prev = focused->next;
+        focused->next = workspaces[current_ws];
+        workspaces[current_ws] = focused;
+    }
     arrange();
 }
 
@@ -829,21 +829,28 @@ void prevwin(const Arg *arg) {
     else if (can_focus(last)) focus(last);
 }
 
-static int get_stack_clients(Client *stack[], int max) {
-    if (!workspaces[current_ws]) return 0;
+// static int get_stack_clients(Client *stack[], int max) {
+//     if (!workspaces[current_ws]) return 0;
+//     int n = 0;
+//     Client *c = workspaces[current_ws]->next;
+//     while (c && n < max) {
+//         stack[n++] = c;
+//         c = c->next;
+//     }
+//     return n;
+// }
+
+static void move_in_stack(int delta) {
+    if (!focused || !workspaces[current_ws] || focused == workspaces[current_ws])
+        return;
+
+    Client *stack[max_stack_size];
     int n = 0;
     Client *c = workspaces[current_ws]->next;
-    while (c && n < max) {
+    while (c && n < max_stack_size) {
         stack[n++] = c;
         c = c->next;
     }
-    return n;
-}
-
-static void move_in_stack(int delta) {
-    if (!focused || focused == workspaces[current_ws]) return;
-    Client *stack[max_stack_size];
-    int n = get_stack_clients(stack, max_stack_size);
     if (n < 2) return;
 
     int idx = -1;
@@ -858,16 +865,17 @@ static void move_in_stack(int delta) {
     int new_idx = idx + delta;
     if (new_idx < 0 || new_idx >= n) return;
 
-    Client *temp = stack[new_idx];
-    stack[new_idx] = stack[idx];
-    stack[idx] = temp;
+    // swap
+    Client *tmp = stack[idx];
+    stack[idx] = stack[new_idx];
+    stack[new_idx] = tmp;
 
-    Client *current = workspaces[current_ws];
+    Client *cur = workspaces[current_ws];
     for (int i = 0; i < n; i++) {
-        current->next = stack[i];
-        current = stack[i];
+        cur->next = stack[i];
+        cur = cur->next;
     }
-    current->next = NULL;
+    cur->next = NULL;
     arrange();
 }
 
