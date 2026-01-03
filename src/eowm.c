@@ -1,980 +1,1467 @@
-/* eowm - eet owter winvow manader (vertical stack, master on right) */
+/* eowm - eet owter winvow manader */
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/keysym.h>
-// #include <X11/XF86keysym.h>
 #include <X11/Xatom.h>
 #include <X11/cursorfont.h>
 #include <X11/extensions/Xrandr.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <sys/wait.h>
-#include <stdio.h>
 #include <signal.h>
-#include <string.h>
 #include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+#define HASH_SIZE       256
+#define MAX_COLUMNS     16
+#define CLIENTS_PER_COL 256
+
+#define VERSION "2.0"
+
+typedef union {
+	int i;
+	const char *cmd;
+} Arg;
 
 typedef struct Client Client;
 struct Client {
-    Window win;
-    int x, y, w, h;
-    int workspace;
-    int isfullscreen;
-    int ishidden;
-    int isfloating;
-    Client *next;
+	Window win;
+	int x, y, w, h;
+	int workspace;
+	int column;
+	unsigned int isfullscreen:1;
+	unsigned int ishidden:1;
+	unsigned int isfloating:1;
+	Client *next;
+	Client *hash_next;
 };
+
+typedef struct {
+	int count;
+	Client **clients;
+} Column;
+
+typedef struct {
+	Column columns[MAX_COLUMNS];
+	int num_columns;
+	int focused_column;
+} Workspace;
+
+typedef struct {
+	const char *class;
+	const char *instance;
+	int workspace;
+	int isfloating;
+	int monitor;
+} Rule;
 
 typedef struct StrutWindow StrutWindow;
 struct StrutWindow {
-    Window win;
-    long struts[4]; // left, right, top, bottom
-    StrutWindow *next;
+	Window win;
+	long struts[4];
+	StrutWindow *next;
 };
 
 typedef struct Monitor Monitor;
 struct Monitor {
-    int x, y, w, h;
-    int num;
-    Monitor *next;
+	int x, y, w, h;
+	int num;
+	Monitor *next;
 };
 
-typedef union {
-    int i;
-    const char *cmd;
-} Arg;
-
 typedef struct {
-    unsigned int mod;
-    KeySym keysym;
-    void (*func)(const Arg *);
-    const Arg arg;
+	unsigned int mod;
+	KeySym keysym;
+	void (*func)(const Arg *);
+	const Arg arg;
 } Key;
 
-static Display *dpy;
-static Window root;
-static Client *focused = NULL;
-static int screen;
-static int sw, sh; // screen width/height
-static double master_size;
-static Client *workspaces[9] = {NULL};
-static Client *last_focused[9] = {NULL};
-static int current_ws = 0;
-static Monitor *monitors = NULL;
-static Monitor *current_monitor = NULL;
-static int monitor_count = 0;
-static unsigned long border_normal, border_focused;
-static Atom wm_protocols, wm_delete_window, wm_state, wm_take_focus;
-static Atom net_wm_strut, net_wm_strut_partial;
-static StrutWindow *strut_windows = NULL;
-static int global_strut_left = 0;
-static int global_strut_right = 0;
-static int global_strut_top = 0;
-static int global_strut_bottom = 0;
-
-static void buttonpress(XEvent *e);
-static void configurerequest(XEvent *e);
-static void maprequest(XEvent *e);
-static void unmapnotify(XEvent *e);
-static void destroynotify(XEvent *e);
-static void enternotify(XEvent *e);
-static void keypress(XEvent *e);
-static void screenchange(XEvent *e);
-static int can_focus(Client *c);
-static void arrange_monitor(Monitor *mon);
-
-static void focus(Client *c);
+/* function declarations */
 static void arrange(void);
-static void scan(void);
-static void resize(Client *c, int x, int y, int w, int h);
-static void removeclient(Window win);
-static int get_stack_clients(Client *stack[], int max);
-static void move_in_stack(int delta);
+static void buttonpress(XEvent *e);
+static void cleanup(void);
+static void columnadd(Workspace *ws, int col, Client *c);
+static void columnremove(Workspace *ws, Client *c);
+static void compact(Workspace *ws);
+static void configurerequest(XEvent *e);
+static Client *createclient(Window win, int floating);
+static void destroynotify(XEvent *e);
 static void die(const char *fmt, ...);
-static void update_struts(void);
-static void remove_strut_window(Window win);
-static int get_window_struts(Window win, long struts[4]);
-
-static void focus_monitor(const Arg *arg);
-static void movewin_to_monitor(const Arg *arg);
-
+static void enternotify(XEvent *e);
+static void focus(Client *c);
+static void focuscolumn(const Arg *arg);
+static void focusmonitor(const Arg *arg);
+static void fullscreen(const Arg *arg);
+static Client *hashfind(Window win);
+static void hashinsert(Client *c);
+static void hashremove(Window win);
+static void initworkspaces(void);
+static void keypress(XEvent *e);
 static void killclient(const Arg *arg);
-static void togglemaster(const Arg *arg);
-static void incmaster(const Arg *arg);
-static void decmaster(const Arg *arg);
+static void maprequest(XEvent *e);
+static Rule *matchrule(Window win);
+static void movecolumn(const Arg *arg);
+static void movemonitor(const Arg *arg);
+static void movews(const Arg *arg);
 static void nextwin(const Arg *arg);
 static void prevwin(const Arg *arg);
-static void movewin(const Arg *arg);
-static void switchws(const Arg *arg);
-static void movewin_to_ws(const Arg *arg);
-static void fullscreen(const Arg *arg);
+static void propertynotify(XEvent *e);
 static void quit(const Arg *arg);
+static void removeclient(Window win);
+static void removestrutwin(Window win);
+static void resize(Client *c, int x, int y, int w, int h);
+static void scan(void);
+static void screenchange(XEvent *e);
+static void setcolors(void);
+static void setrootbg(void);
+static void setupatoms(void);
 static void spawn(const Arg *arg);
-static void cleanup(void);
+static void switchws(const Arg *arg);
+static void unmapnotify(XEvent *e);
+static void updateclientlist(void);
+static void updateewmh(void);
+static Monitor *updatemonitors(void);
+static void updatestruts(void);
 
-static Monitor* get_monitor_at(int x, int y);
-static void update_monitors(void);
+static Monitor *getat(int x, int y);
+static Monitor *getforwin(Client *c);
+static int getstruts(Window win, long struts[4]);
+static int wintype(Window win, const char *type_name);
 
 #include "config.h"
 
-static void (*handlers[LASTEvent])(XEvent *) = {
-    [ButtonPress] = buttonpress,
-    [ConfigureRequest] = configurerequest,
-    [MapRequest] = maprequest,
-    [UnmapNotify] = unmapnotify,
-    [DestroyNotify] = destroynotify,
-    [EnterNotify] = enternotify,
-    [KeyPress] = keypress,
-    [RRScreenChangeNotify + RRNotify] = screenchange
+/* variables */
+static Display *dpy;
+static Window root;
+static Client *focused;
+static Client *hashtable[HASH_SIZE];
+static int screen;
+static int sw, sh;
+static Workspace workspaces[9];
+static int currentws;
+static Monitor *monitors;
+static Monitor *currentmon;
+static int moncount;
+static unsigned long bordernormal, borderfocused;
+static Atom wmatoms[10];
+static Atom netatoms[10];
+static StrutWindow *strutwindows;
+static int strutleft, strutright, struttop, strutbottom;
+
+static void (*handler[LASTEvent])(XEvent *) = {
+	[ButtonPress]      = buttonpress,
+	[ConfigureRequest] = configurerequest,
+	[DestroyNotify]    = destroynotify,
+	[EnterNotify]      = enternotify,
+	[KeyPress]         = keypress,
+	[MapRequest]       = maprequest,
+	[PropertyNotify]   = propertynotify,
+	[UnmapNotify]      = unmapnotify,
+	[RRScreenChangeNotify + RRNotify] = screenchange,
 };
 
-static void setup_colors(void) {
-    Colormap cmap = DefaultColormap(dpy, screen);
-    XColor color;
-    XParseColor(dpy, cmap, col_border_normal, &color);
-    XAllocColor(dpy, cmap, &color);
-    border_normal = color.pixel;
-    XParseColor(dpy, cmap, col_border_focused, &color);
-    XAllocColor(dpy, cmap, &color);
-    border_focused = color.pixel;
+void
+arrange(void)
+{
+	Workspace *ws;
+	Column *col;
+	Client *c;
+	Monitor *m;
+	int i, j, x, y, x0, y0, usablew, usableh;
+	int totalclients, activecols, colwidth, winheight;
+
+	ws = &workspaces[currentws];
+
+	/* handle fullscreen */
+	for (i = 0; i < ws->num_columns; i++) {
+		col = &ws->columns[i];
+		for (j = 0; j < col->count; j++) {
+			c = col->clients[j];
+			if (!c->isfullscreen)
+				continue;
+			m = getforwin(c);
+			XSetWindowBorderWidth(dpy, c->win, 0);
+			resize(c, m->x, m->y, m->w, m->h);
+			XMapWindow(dpy, c->win);
+			XRaiseWindow(dpy, c->win);
+			/* hide all other windows */
+			for (int ci = 0; ci < ws->num_columns; ci++) {
+				for (int cj = 0; cj < ws->columns[ci].count; cj++) {
+					Client *other = ws->columns[ci].clients[cj];
+					if (other != c) {
+						other->ishidden = 1;
+						XUnmapWindow(dpy, other->win);
+					}
+				}
+			}
+			return;
+		}
+	}
+
+	/* restore all windows */
+	for (i = 0; i < ws->num_columns; i++) {
+		col = &ws->columns[i];
+		for (j = 0; j < col->count; j++) {
+			c = col->clients[j];
+			c->ishidden = 0;
+			XSetWindowBorderWidth(dpy, c->win, border_width);
+			XMapWindow(dpy, c->win);
+		}
+	}
+
+	if (!currentmon)
+		return;
+
+	x0 = currentmon->x + strutleft + padding;
+	y0 = currentmon->y + struttop + padding;
+	usablew = currentmon->w - strutleft - strutright - 2 * padding;
+	usableh = currentmon->h - struttop - strutbottom - 2 * padding;
+
+	totalclients = 0;
+	for (i = 0; i < ws->num_columns; i++)
+		totalclients += ws->columns[i].count;
+
+	if (totalclients == 0)
+		return;
+
+	activecols = 0;
+	for (i = 0; i < ws->num_columns; i++)
+		if (ws->columns[i].count > 0)
+			activecols++;
+
+	if (activecols == 0)
+		return;
+
+	colwidth = (usablew - (activecols - 1) * padding) / activecols;
+	x = x0;
+
+	for (i = 0; i < ws->num_columns; i++) {
+		col = &ws->columns[i];
+		if (col->count == 0)
+			continue;
+
+		y = y0;
+		winheight = (usableh - (col->count - 1) * padding) / col->count;
+
+		for (j = 0; j < col->count; j++) {
+			c = col->clients[j];
+			if (c->isfloating)
+				continue;
+
+			int h = (j == col->count - 1)
+			    ? (usableh - (y - y0))
+			    : winheight;
+			resize(c, x, y, colwidth, h);
+			y += h + padding;
+		}
+
+		x += colwidth + padding;
+	}
+
+	/* raise floating windows */
+	for (i = 0; i < ws->num_columns; i++)
+		for (j = 0; j < ws->columns[i].count; j++)
+			if (ws->columns[i].clients[j]->isfloating)
+				XRaiseWindow(dpy, ws->columns[i].clients[j]->win);
+
+	if (focused)
+		XRaiseWindow(dpy, focused->win);
 }
 
-static void sigchld_handler(int sig) {
-    (void)sig;
-    while (waitpid(-1, NULL, WNOHANG) > 0);
+void
+buttonpress(XEvent *e)
+{
+	Client *c;
+
+	c = hashfind(e->xbutton.subwindow);
+	if (c)
+		focus(c);
 }
 
-static int xerrorHandler(Display *dpy, XErrorEvent *ee) {
-    char msg[256];
-    XGetErrorText(dpy, ee->error_code, msg, sizeof(msg));
-    fprintf(stderr, "X Error: %s\n", msg);
-    return 0;
+void
+cleanup(void)
+{
+	Workspace *ws;
+	Monitor *m;
+	StrutWindow *sw;
+	int i, j;
+
+	for (i = 0; i < 9; i++) {
+		ws = &workspaces[i];
+		for (j = 0; j < ws->num_columns; j++)
+			free(ws->columns[j].clients);
+	}
+
+	while (strutwindows) {
+		sw = strutwindows->next;
+		free(strutwindows);
+		strutwindows = sw;
+	}
+
+	while (monitors) {
+		m = monitors->next;
+		free(monitors);
+		monitors = m;
+	}
 }
 
-static void setrootbackground(void) {
-    Colormap cmap = DefaultColormap(dpy, screen);
-    XColor color;
-    if (XParseColor(dpy, cmap, root_bg, &color) && XAllocColor(dpy, cmap, &color)) {
-        XSetWindowBackground(dpy, root, color.pixel);
-        XClearWindow(dpy, root);
-    }
+void
+columnadd(Workspace *ws, int col, Client *c)
+{
+	Column *column;
+
+	if (col < 0)
+		col = 0;
+	if (col >= ws->num_columns)
+		col = ws->num_columns - 1;
+
+	column = &ws->columns[col];
+	column->clients[column->count++] = c;
+	c->column = col;
 }
 
-static void setup_icccm(void) {
-    wm_protocols = XInternAtom(dpy, "WM_PROTOCOLS", False);
-    wm_delete_window = XInternAtom(dpy, "WM_DELETE_WINDOW", False);
-    wm_state = XInternAtom(dpy, "WM_STATE", False);
-    wm_take_focus = XInternAtom(dpy, "WM_TAKE_FOCUS", False);
-    net_wm_strut = XInternAtom(dpy, "_NET_WM_STRUT", False);
-    net_wm_strut_partial = XInternAtom(dpy, "_NET_WM_STRUT_PARTIAL", False);
+void
+columnremove(Workspace *ws, Client *c)
+{
+	Column *column;
+	int col, idx, i;
+
+	col = idx = -1;
+	for (i = 0; i < ws->num_columns; i++) {
+		column = &ws->columns[i];
+		for (int j = 0; j < column->count; j++) {
+			if (column->clients[j] == c) {
+				col = i;
+				idx = j;
+				break;
+			}
+		}
+		if (col >= 0)
+			break;
+	}
+
+	if (col < 0)
+		return;
+
+	column = &ws->columns[col];
+	for (i = idx; i < column->count - 1; i++)
+		column->clients[i] = column->clients[i + 1];
+	column->count--;
+
+	compact(ws);
 }
 
-void die(const char *fmt, ...) {
-    va_list ap;
-    va_start(ap, fmt);
-    vfprintf(stderr, fmt, ap);
-    va_end(ap);
-    fputc('\n', stderr);
-    exit(1);
+void
+compact(Workspace *ws)
+{
+	int i, j, write;
+
+	write = 0;
+	for (i = 0; i < ws->num_columns; i++) {
+		if (ws->columns[i].count > 0) {
+			if (write != i) {
+				ws->columns[write] = ws->columns[i];
+				ws->columns[i].clients = NULL;
+				ws->columns[i].count = 0;
+			}
+			/* update column indices */
+			for (j = 0; j < ws->columns[write].count; j++)
+				ws->columns[write].clients[j]->column = write;
+			write++;
+		} else {
+			if (ws->columns[i].clients)
+				free(ws->columns[i].clients);
+			ws->columns[i].clients = NULL;
+		}
+	}
+
+	ws->num_columns = write;
+	if (ws->num_columns == 0) {
+		ws->num_columns = 1;
+		ws->columns[0].count = 0;
+		ws->columns[0].clients = calloc(CLIENTS_PER_COL, sizeof(Client *));
+	}
+
+	if (ws->focused_column >= ws->num_columns)
+		ws->focused_column = ws->num_columns - 1;
 }
 
-static void update_struts(void) {
-    global_strut_left = global_strut_right = global_strut_top = global_strut_bottom = 0;
-    for (StrutWindow *sw = strut_windows; sw; sw = sw->next) {
-        if (sw->struts[0] > global_strut_left) global_strut_left = sw->struts[0];
-        if (sw->struts[1] > global_strut_right) global_strut_right = sw->struts[1];
-        if (sw->struts[2] > global_strut_top) global_strut_top = sw->struts[2];
-        if (sw->struts[3] > global_strut_bottom) global_strut_bottom = sw->struts[3];
-    }
+void
+configurerequest(XEvent *e)
+{
+	XConfigureRequestEvent *ev;
+	XWindowChanges wc;
+
+	ev = &e->xconfigurerequest;
+	wc.x = ev->x;
+	wc.y = ev->y;
+	wc.width = ev->width;
+	wc.height = ev->height;
+	wc.border_width = ev->border_width;
+	wc.sibling = ev->above;
+	wc.stack_mode = ev->detail;
+	XConfigureWindow(dpy, ev->window, ev->value_mask, &wc);
 }
 
-static void remove_strut_window(Window win) {
-    StrutWindow **prev = &strut_windows;
-    for (StrutWindow *sw = strut_windows; sw; sw = sw->next) {
-        if (sw->win == win) {
-            *prev = sw->next;
-            free(sw);
-            update_struts();
-            return;
-        }
-        prev = &sw->next;
-    }
+Client *
+createclient(Window win, int floating)
+{
+	Client *c;
+	Rule *rule;
+	Workspace *ws;
+
+	c = calloc(1, sizeof(Client));
+	if (!c)
+		return NULL;
+
+	rule = matchrule(win);
+
+	c->win = win;
+	c->workspace = (rule && rule->workspace >= 0) ? rule->workspace : currentws;
+	c->isfloating = rule ? rule->isfloating : floating;
+	c->column = 0;
+
+	hashinsert(c);
+
+	if (currentmon) {
+		if (c->isfloating) {
+			c->x = currentmon->x + currentmon->w / 4;
+			c->y = currentmon->y + currentmon->h / 4;
+			c->w = currentmon->w / 2;
+			c->h = currentmon->h / 2;
+		} else {
+			c->x = currentmon->x;
+			c->y = currentmon->y;
+		}
+	}
+
+	XSetWindowBorderWidth(dpy, c->win, border_width);
+	XSetWindowBorder(dpy, c->win, bordernormal);
+	XSelectInput(dpy, c->win, EnterWindowMask | PropertyChangeMask | StructureNotifyMask);
+	XMapWindow(dpy, c->win);
+
+	ws = &workspaces[c->workspace];
+	columnadd(ws, ws->focused_column, c);
+
+	return c;
 }
 
-static int get_window_struts(Window win, long struts[4]) {
-    Atom types[] = {net_wm_strut_partial, net_wm_strut};
-    for (int t = 0; t < 2; t++) {
-        Atom actual_type;
-        int fmt;
-        unsigned long n, after;
-        unsigned char *data = NULL;
-        if (XGetWindowProperty(dpy, win, types[t], 0, 4, False, XA_CARDINAL,
-                              &actual_type, &fmt, &n, &after, &data) == Success) {
-            if (actual_type == XA_CARDINAL && fmt == 32 && n >= 4) {
-                long *vals = (long*)data;
-                int has_struts = 0;
-                for (int i = 0; i < 4; i++) {
-                    struts[i] = vals[i];
-                    if (vals[i] > 0) has_struts = 1;
-                }
-                XFree(data);
-                return has_struts;
-            }
-            if (data) XFree(data);
-        }
-    }
-    return 0;
+void
+destroynotify(XEvent *e)
+{
+	StrutWindow *sw;
+
+	for (sw = strutwindows; sw; sw = sw->next) {
+		if (sw->win == e->xdestroywindow.window) {
+			removestrutwin(e->xdestroywindow.window);
+			arrange();
+			return;
+		}
+	}
+	removeclient(e->xdestroywindow.window);
 }
 
-static int check_window_type(Window win, const char *type_name) {
-    Atom actual_type;
-    int fmt;
-    unsigned long n, after;
-    unsigned char *prop = NULL;
-    Atom net_wm_window_type = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", False);
+void
+die(const char *fmt, ...)
+{
+	va_list ap;
+
+	va_start(ap, fmt);
+	vfprintf(stderr, fmt, ap);
+	va_end(ap);
+	fputc('\n', stderr);
+	exit(1);
+}
+
+void
+enternotify(XEvent *e)
+{
+	Client *c;
+
+	if (e->xcrossing.mode != NotifyNormal || e->xcrossing.detail == NotifyInferior)
+		return;
+	c = hashfind(e->xcrossing.window);
+	if (c)
+		focus(c);
+}
+
+void
+focus(Client *c)
+{
+	Workspace *ws;
+	XWindowAttributes wa;
+
+	if (!c || c->ishidden || c->workspace != currentws)
+		return;
+
+	if (!XGetWindowAttributes(dpy, c->win, &wa))
+		return;
+
+	if (focused && focused != c)
+		XSetWindowBorder(dpy, focused->win, bordernormal);
+
+	focused = c;
+	ws = &workspaces[currentws];
+	ws->focused_column = c->column;
+
+	XSetWindowBorder(dpy, c->win, borderfocused);
+	XRaiseWindow(dpy, c->win);
+	XSetInputFocus(dpy, c->win, RevertToPointerRoot, CurrentTime);
+	updateewmh();
+}
+
+void
+focuscolumn(const Arg *arg)
+{
+	Workspace *ws;
+	int dir, newcol;
+
+	ws = &workspaces[currentws];
+	dir = arg->i;
+	newcol = ws->focused_column;
+
+	do {
+		newcol += dir;
+		if (newcol < 0 || newcol >= ws->num_columns)
+			return;
+	} while (ws->columns[newcol].count == 0);
+
+	ws->focused_column = newcol;
+	focus(ws->columns[newcol].clients[0]);
+}
+
+void
+focusmonitor(const Arg *arg)
+{
+	Monitor *target, *last, *m;
+	int dir;
+
+	if (!monitors || moncount <= 1)
+		return;
+
+	dir = arg->i;
+	target = NULL;
+
+	if (dir > 0) {
+		target = currentmon
+		    ? (currentmon->next ? currentmon->next : monitors)
+		    : monitors;
+	} else {
+		last = monitors;
+		while (last && last->next)
+			last = last->next;
+
+		if (!currentmon || currentmon == monitors) {
+			target = last;
+		} else {
+			m = monitors;
+			while (m && m->next != currentmon)
+				m = m->next;
+			target = m;
+		}
+	}
+
+	if (!target)
+		target = monitors;
+	currentmon = target;
+
+	XWarpPointer(dpy, None, root, 0, 0, 0, 0,
+	    target->x + target->w / 2, target->y + target->h / 2);
+	XFlush(dpy);
+}
+
+void
+fullscreen(const Arg *arg)
+{
+	if (!focused)
+		return;
+
+	focused->isfullscreen = !focused->isfullscreen;
+
+	if (focused->isfullscreen) {
+		XSetWindowBorderWidth(dpy, focused->win, 0);
+	} else {
+		XSetWindowBorderWidth(dpy, focused->win, border_width);
+		XSetWindowBorder(dpy, focused->win, borderfocused);
+	}
+
+	arrange();
+}
+
+Client *
+hashfind(Window win)
+{
+	Client *c;
+	unsigned int h;
+
+	h = (unsigned int)win % HASH_SIZE;
+	for (c = hashtable[h]; c; c = c->hash_next)
+		if (c->win == win)
+			return c;
+	return NULL;
+}
+
+void
+hashinsert(Client *c)
+{
+	unsigned int h;
+
+	h = (unsigned int)c->win % HASH_SIZE;
+	c->hash_next = hashtable[h];
+	hashtable[h] = c;
+}
+
+void
+hashremove(Window win)
+{
+	Client *c, **pp;
+	unsigned int h;
+
+	h = (unsigned int)win % HASH_SIZE;
+	pp = &hashtable[h];
+	for (c = hashtable[h]; c; c = c->hash_next) {
+		if (c->win == win) {
+			*pp = c->hash_next;
+			return;
+		}
+		pp = &c->hash_next;
+	}
+}
+
+void
+initworkspaces(void)
+{
+	int i;
+
+	for (i = 0; i < 9; i++) {
+		workspaces[i].num_columns = 1;
+		workspaces[i].focused_column = 0;
+		workspaces[i].columns[0].count = 0;
+		workspaces[i].columns[0].clients = calloc(CLIENTS_PER_COL, sizeof(Client *));
+	}
+}
+
+void
+keypress(XEvent *e)
+{
+	KeySym keysym;
+	unsigned int state;
+	size_t i;
+
+	keysym = XLookupKeysym(&e->xkey, 0);
+	state = e->xkey.state & ~(LockMask | Mod2Mask);
+	for (i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
+		if (keysym == keys[i].keysym && state == keys[i].mod) {
+			if (keys[i].func)
+				keys[i].func(&keys[i].arg);
+			break;
+		}
+	}
+}
+
+void
+killclient(const Arg *arg)
+{
+	if (focused)
+		XKillClient(dpy, focused->win);
+}
+
+void
+maprequest(XEvent *e)
+{
+	XMapRequestEvent *ev;
+	XWindowAttributes wa;
+	Window trans;
+	Client *c;
+	StrutWindow *sw;
+	long struts[4];
+	int floating;
+
+	ev = &e->xmaprequest;
+	if (!XGetWindowAttributes(dpy, ev->window, &wa))
+		return;
+
+	if (wa.override_redirect) {
+		XMapWindow(dpy, ev->window);
+		return;
+	}
+
+	if (hashfind(ev->window)) {
+		XMapWindow(dpy, ev->window);
+		return;
+	}
+
+	if (wintype(ev->window, "_NET_WM_WINDOW_TYPE_NOTIFICATION") ||
+	    wintype(ev->window, "_NET_WM_WINDOW_TYPE_SPLASH")) {
+		XMapWindow(dpy, ev->window);
+		return;
+	}
+
+	if (wintype(ev->window, "_NET_WM_WINDOW_TYPE_DOCK")) {
+		if (getstruts(ev->window, struts)) {
+			sw = calloc(1, sizeof(StrutWindow));
+			if (sw) {
+				sw->win = ev->window;
+				memcpy(sw->struts, struts, sizeof(struts));
+				sw->next = strutwindows;
+				strutwindows = sw;
+				updatestruts();
+			}
+		}
+		XMapWindow(dpy, ev->window);
+		arrange();
+		return;
+	}
+
+	if (getstruts(ev->window, struts)) {
+		sw = calloc(1, sizeof(StrutWindow));
+		if (sw) {
+			sw->win = ev->window;
+			memcpy(sw->struts, struts, sizeof(struts));
+			sw->next = strutwindows;
+			strutwindows = sw;
+			updatestruts();
+		}
+		XMapWindow(dpy, ev->window);
+		arrange();
+		return;
+	}
+
+	trans = None;
+	floating = (XGetTransientForHint(dpy, ev->window, &trans) && trans != None);
+	c = createclient(ev->window, floating);
+	if (c) {
+		if (floating) {
+			XRaiseWindow(dpy, c->win);
+			focus(c);
+		} else {
+			focus(c);
+			arrange();
+		}
+		updateclientlist();
+	}
+}
+
+Rule *
+matchrule(Window win)
+{
+	XClassHint ch;
+	size_t i;
+
+	ch.res_class = ch.res_name = NULL;
+	if (!XGetClassHint(dpy, win, &ch))
+		return NULL;
+
+	for (i = 0; i < sizeof(rules) / sizeof(rules[0]); i++) {
+		if ((rules[i].class && ch.res_class &&
+		    !strcmp(ch.res_class, rules[i].class)) ||
+		    (rules[i].instance && ch.res_name &&
+		    !strcmp(ch.res_name, rules[i].instance))) {
+			if (ch.res_class)
+				XFree(ch.res_class);
+			if (ch.res_name)
+				XFree(ch.res_name);
+			return &rules[i];
+		}
+	}
+
+	if (ch.res_class)
+		XFree(ch.res_class);
+	if (ch.res_name)
+		XFree(ch.res_name);
+	return NULL;
+}
+
+void
+movecolumn(const Arg *arg)
+{
+    Workspace *ws;
+    Client *moving;
+    int dir, targetcol;
+
+    if (!focused || focused->isfloating)
+        return;
+
+    ws = &workspaces[currentws];
+    moving = focused;
+    dir = arg->i;
     
-    if (XGetWindowProperty(dpy, win, net_wm_window_type, 0, 1, False, XA_ATOM,
-                          &actual_type, &fmt, &n, &after, &prop) == Success && prop) {
-        Atom type = *(Atom*)prop;
-        Atom check = XInternAtom(dpy, type_name, False);
-        XFree(prop);
-        return type == check;
-    }
-    return 0;
-}
+    columnremove(ws, moving);
 
-static Client* create_client(Window win, int floating) {
-    Client *c = calloc(1, sizeof(Client));
-    if (!c) return NULL;
-    c->win = win;
-    c->workspace = current_ws;
-    c->isfloating = floating;
-    c->next = workspaces[current_ws];
-    workspaces[current_ws] = c;
-    
-    if (current_monitor) {
-        if (floating) {
-            c->x = current_monitor->x + current_monitor->w / 4;
-            c->y = current_monitor->y + current_monitor->h / 4;
-            c->w = current_monitor->w / 2;
-            c->h = current_monitor->h / 2;
+    targetcol = moving->column + dir;
+
+    if (targetcol < 0) 
+        targetcol = 0;
+
+    if (targetcol >= ws->num_columns) {
+        if (ws->num_columns < MAX_COLUMNS) {
+            targetcol = ws->num_columns;
+            ws->num_columns++;
+            ws->columns[targetcol].count = 0;
+            ws->columns[targetcol].clients = calloc(CLIENTS_PER_COL, sizeof(Client *));
         } else {
-            c->x = current_monitor->x;
-            c->y = current_monitor->y;
+            targetcol = ws->num_columns - 1;
         }
     }
-    
-    XSetWindowBorderWidth(dpy, c->win, border_width);
-    XSetWindowBorder(dpy, c->win, border_normal);
-    XSelectInput(dpy, c->win, EnterWindowMask | LeaveWindowMask | 
-                 FocusChangeMask | StructureNotifyMask);
-    XMapWindow(dpy, c->win);
-    return c;
-}
 
-static void update_monitors(void) {
-    Monitor *m;
-    while (monitors) {
-        m = monitors->next;
-        free(monitors);
-        monitors = m;
-    }
-    monitors = NULL;
-    current_monitor = NULL;
-    monitor_count = 0;
+    columnadd(ws, targetcol, moving);
 
-    XRRScreenResources *sr = XRRGetScreenResources(dpy, root);
-    if (!sr) return;
-
-    for (int i = 0; i < sr->ncrtc; i++) {
-        XRRCrtcInfo *ci = XRRGetCrtcInfo(dpy, sr, sr->crtcs[i]);
-        if (!ci || ci->noutput == 0 || ci->width == 0 || ci->height == 0) {
-            if (ci) XRRFreeCrtcInfo(ci);
-            continue;
-        }
-
-        Monitor *mon = calloc(1, sizeof(Monitor));
-        mon->num = monitor_count++;
-        mon->x = ci->x;
-        mon->y = ci->y;
-        mon->w = ci->width;
-        mon->h = ci->height;
-        mon->next = monitors;
-        monitors = mon;
-
-        XRRFreeCrtcInfo(ci);
-    }
-    XRRFreeScreenResources(sr);
-
-    if (!monitors) {
-        monitors = calloc(1, sizeof(Monitor));
-        monitors->x = 0;
-        monitors->y = 0;
-        monitors->w = sw;
-        monitors->h = sh;
-        monitors->num = 0;
-        monitor_count = 1;
-    }
-    current_monitor = monitors;
-}
-
-static Monitor* get_monitor_at(int x, int y) {
-    for (Monitor *m = monitors; m; m = m->next) {
-        if (x >= m->x && x < m->x + m->w && y >= m->y && y < m->y + m->h)
-            return m;
-    }
-    return monitors;
-}
-
-static Monitor* get_monitor_for_window(Client *c) {
-    return get_monitor_at(c->x + c->w / 2, c->y + c->h / 2);
-}
-
-static void focus_monitor(const Arg *arg) {
-    if (!monitors || monitor_count <= 1) return;
-    
-    int direction = arg->i;
-    Monitor *target = NULL;
-    Monitor *m = monitors;
-    
-    if (direction > 0) {
-        target = current_monitor ? (current_monitor->next ? current_monitor->next : monitors) : monitors;
-    } else {
-        Monitor *last = monitors;
-        while (last && last->next) last = last->next;
-        
-        if (!current_monitor || current_monitor == monitors) {
-            target = last;
-        } else {
-            m = monitors;
-            while (m && m->next != current_monitor) m = m->next;
-            target = m;
-        }
-    }
-    
-    if (!target) target = monitors;
-    current_monitor = target;
-    
-    Client *to_focus = NULL;
-    for (Client *c = workspaces[current_ws]; c; c = c->next) {
-        if (c->ishidden || c->isfloating) continue;
-        
-        Monitor *win_mon = get_monitor_for_window(c);
-        if (win_mon == target) {
-            to_focus = c;
-            break;
-        }
-    }
-    
-    if (to_focus) {
-        focus(to_focus);
-    }
-    
-    XWarpPointer(dpy, None, root, 0, 0, 0, 0, 
-                 target->x + target->w / 2, 
-                 target->y + target->h / 2);
-    XFlush(dpy);
-}
-
-static void movewin_to_monitor(const Arg *arg) {
-    if (!focused || !monitors || monitor_count <= 1) return;
-    if (focused->isfloating) return;
-    
-    int direction = arg->i;
-    Monitor *current = get_monitor_for_window(focused);
-    Monitor *target = NULL;
-    
-    if (direction > 0) {
-        target = current ? (current->next ? current->next : monitors) : monitors;
-    } else {
-        Monitor *last = monitors;
-        while (last && last->next) last = last->next;
-        
-        if (!current || current == monitors) {
-            target = last;
-        } else {
-            Monitor *m = monitors;
-            while (m && m->next != current) m = m->next;
-            target = m;
-        }
-    }
-    
-    if (!target || target == current) return;
-    
-    focused->x = target->x + padding;
-    focused->y = target->y + padding;
-    
-    arrange();
-    
-    focus(focused);
-    
-    XWarpPointer(dpy, None, root, 0, 0, 0, 0,
-                 focused->x + focused->w / 2,
-                 focused->y + focused->h / 2);
-    XFlush(dpy);
-}
-
-int main(int argc, char *argv[]) {
-    XEvent ev;
-    if (argc == 2 && !strcmp("-v", argv[1]))
-        die("eowm v"VERSION);
-    else if (argc != 1)
-        die("Usage: eowm [-v]");
-    if (!getenv("DISPLAY"))
-        die("DISPLAY environment variable not set");
-    if (!(dpy = XOpenDisplay(NULL)))
-        die("cannot open X11 display (is X running?)");
-
-    XSetErrorHandler(xerrorHandler);
-    signal(SIGCHLD, sigchld_handler);
-    
-    screen = DefaultScreen(dpy);
-    root = RootWindow(dpy, screen);
-    Cursor cursor = XCreateFontCursor(dpy, XC_left_ptr);
-    XDefineCursor(dpy, root, cursor);
-    sw = DisplayWidth(dpy, screen);
-    sh = DisplayHeight(dpy, screen);
-    master_size = default_master_size;
-
-    setup_colors();
-    setrootbackground();
-    setup_icccm();
-    update_monitors();
-    if (!current_monitor && monitors) {
-        current_monitor = monitors;
-    }
-    XRRSelectInput(dpy, root, RRScreenChangeNotifyMask);
-    
-    XSelectInput(dpy, root, SubstructureRedirectMask | SubstructureNotifyMask | 
-                            EnterWindowMask | LeaveWindowMask | FocusChangeMask |
-                            StructureNotifyMask | PropertyChangeMask);
-    
-    for (size_t i = 0; i < sizeof(keys)/sizeof(keys[0]); i++) {
-        KeyCode code = XKeysymToKeycode(dpy, keys[i].keysym);
-        XGrabKey(dpy, code, keys[i].mod, root, True, GrabModeAsync, GrabModeAsync);
-    }
-
-    scan();
-    while (1) {
-        XNextEvent(dpy, &ev);
-        if (handlers[ev.type])
-            handlers[ev.type](&ev);
-    }
-}
-
-void buttonpress(XEvent *e) {
-    XButtonPressedEvent *be = &e->xbutton;
-    for (Client *c = workspaces[current_ws]; c; c = c->next) {
-        if (c->win == be->subwindow) {
-            focus(c);
-            break;
-        }
-    }
-}
-
-void configurerequest(XEvent *e) {
-    XConfigureRequestEvent *ev = &e->xconfigurerequest;
-    XWindowChanges wc = {ev->x, ev->y, ev->width, ev->height, 
-                         ev->border_width, ev->above, ev->detail};
-    XConfigureWindow(dpy, ev->window, ev->value_mask, &wc);
-}
-
-void maprequest(XEvent *e) {
-    XMapRequestEvent *ev = &e->xmaprequest;
-    XWindowAttributes wa;
-    if (!XGetWindowAttributes(dpy, ev->window, &wa)) return;
-
-    if (wa.override_redirect) {
-        XMapWindow(dpy, ev->window);
-        return;
-    }
-
-    for (int i = 0; i < 9; i++) {
-        for (Client *c = workspaces[i]; c; c = c->next) {
-            if (c->win == ev->window) {
-                XMapWindow(dpy, ev->window);
-                return;
-            }
-        }
-    }
-    
-    if (check_window_type(ev->window, "_NET_WM_WINDOW_TYPE_NOTIFICATION") ||
-        check_window_type(ev->window, "_NET_WM_WINDOW_TYPE_SPLASH")) {
-        XMapWindow(dpy, ev->window);
-        return;
-    }
-
-    if (check_window_type(ev->window, "_NET_WM_WINDOW_TYPE_DOCK")) {
-        long struts[4] = {0};
-        if (get_window_struts(ev->window, struts)) {
-            StrutWindow *sw = calloc(1, sizeof(StrutWindow));
-            if (sw) {
-                sw->win = ev->window;
-                memcpy(sw->struts, struts, sizeof(struts));
-                sw->next = strut_windows;
-                strut_windows = sw;
-                update_struts();
-            }
-        }
-        XMapWindow(dpy, ev->window);
-        arrange();
-        return;
-    }
-
-    long struts[4] = {0};
-    if (get_window_struts(ev->window, struts)) {
-        StrutWindow *sw = calloc(1, sizeof(StrutWindow));
-        if (sw) {
-            sw->win = ev->window;
-            memcpy(sw->struts, struts, sizeof(struts));
-            sw->next = strut_windows;
-            strut_windows = sw;
-            update_struts();
-        }
-        XMapWindow(dpy, ev->window);
-        arrange();
-        return;
-    }
-
-    Window trans = None;
-    int floating = (XGetTransientForHint(dpy, ev->window, &trans) && trans != None);
-    Client *c = create_client(ev->window, floating);
-    if (c) {
-        if (floating) {
-            XRaiseWindow(dpy, c->win);
-            focus(c);
-        } else {
-            focus(c);
-            arrange();
-        }
-    }
-}
-
-void unmapnotify(XEvent *e) {
-    XUnmapEvent *ev = &e->xunmap;
-    if (ev->send_event) return;
-    
-    for (StrutWindow *sw = strut_windows; sw; sw = sw->next) {
-        if (sw->win == ev->window) {
-            remove_strut_window(ev->window);
-            arrange();
-            return;
-        }
-    }
-    
-    Client *found = NULL;
-    int found_ws = -1;
-    for (int i = 0; i < 9; i++) {
-        for (Client *c = workspaces[i]; c; c = c->next) {
-            if (c->win == ev->window) {
-                found = c;
-                found_ws = i;
-                break;
-            }
-        }
-        if (found) break;
-    }
-
-    if (!found || found->ishidden || found_ws != current_ws) return;
-    removeclient(ev->window);
-}
-
-void destroynotify(XEvent *e) {
-    Window win = e->xdestroywindow.window;
-    for (StrutWindow *sw = strut_windows; sw; sw = sw->next) {
-        if (sw->win == win) {
-            remove_strut_window(win);
-            arrange();
-            return;
-        }
-    }
-    removeclient(win);
-}
-
-void enternotify(XEvent *e) {
-    if ((e->xcrossing.mode != NotifyNormal) || 
-        (e->xcrossing.detail == NotifyInferior)) return;
-    for (Client *c = workspaces[current_ws]; c; c = c->next) {
-        if (c->win == e->xcrossing.window) {
-            focus(c);
-            break;
-        }
-    }
-}
-
-void keypress(XEvent *e) {
-    KeySym keysym = XLookupKeysym(&e->xkey, 0);
-    unsigned int state = e->xkey.state & ~(LockMask | Mod2Mask);
-    for (size_t i = 0; i < sizeof(keys)/sizeof(keys[0]); i++) {
-        if (keysym == keys[i].keysym && state == keys[i].mod) {
-            if (keys[i].func) keys[i].func(&keys[i].arg);
-            break;
-        }
-    }
-}
-
-static void screenchange(XEvent *e) {
-    XRRUpdateConfiguration(e);
-    sw = DisplayWidth(dpy, screen);
-    sh = DisplayHeight(dpy, screen);
-    update_monitors();
+    ws->focused_column = moving->column;
     arrange();
 }
 
-static void removeclient(Window win) {
-    Client *c, **prev;
-    for (prev = &workspaces[current_ws]; (c = *prev); prev = &c->next) {
-        if (c->win == win) {
-            int was_focused = (focused == c);
-            *prev = c->next;
-            XSelectInput(dpy, c->win, NoEventMask);
-            if (last_focused[current_ws] == c) last_focused[current_ws] = NULL;
-            free(c);
-            if (!workspaces[current_ws]) {
-                focused = NULL;
-            } else if (was_focused) {
-                focus(workspaces[current_ws]);
-            }
-            arrange();
-            return;
-        }
-    }
+void
+movemonitor(const Arg *arg)
+{
+	Monitor *current, *target, *last, *m;
+	int dir;
+
+	if (!focused || !monitors || moncount <= 1 || focused->isfloating)
+		return;
+
+	dir = arg->i;
+	current = getforwin(focused);
+	target = NULL;
+
+	if (dir > 0) {
+		target = current
+		    ? (current->next ? current->next : monitors)
+		    : monitors;
+	} else {
+		last = monitors;
+		while (last && last->next)
+			last = last->next;
+
+		if (!current || current == monitors) {
+			target = last;
+		} else {
+			m = monitors;
+			while (m && m->next != current)
+				m = m->next;
+			target = m;
+		}
+	}
+
+	if (!target || target == current)
+		return;
+
+	focused->x = target->x + padding;
+	focused->y = target->y + padding;
+
+	arrange();
+	focus(focused);
+
+	XWarpPointer(dpy, None, root, 0, 0, 0, 0,
+	    focused->x + focused->w / 2, focused->y + focused->h / 2);
+	XFlush(dpy);
 }
 
-void focus(Client *c) {
-    if (!c || c->ishidden || c->workspace != current_ws) return;
-    XWindowAttributes wa;
-    if (!XGetWindowAttributes(dpy, c->win, &wa)) return;
-    if (focused && focused != c) XSetWindowBorder(dpy, focused->win, border_normal);
-    focused = c;
-    last_focused[current_ws] = c;
-    XSetWindowBorder(dpy, c->win, border_focused);
-    XRaiseWindow(dpy, c->win);
-    XSetInputFocus(dpy, c->win, RevertToPointerRoot, CurrentTime);
+void
+movews(const Arg *arg)
+{
+	Workspace *src, *dst;
+	Client *moving;
+	int ws, i;
+
+	ws = arg->i;
+	if (!focused || ws < 0 || ws >= 9 || ws == currentws)
+		return;
+
+	moving = focused;
+	src = &workspaces[currentws];
+	dst = &workspaces[ws];
+
+	columnremove(src, moving);
+	moving->workspace = ws;
+	moving->isfullscreen = 0;
+	XUnmapWindow(dpy, moving->win);
+
+	columnadd(dst, 0, moving);
+
+	focused = NULL;
+	for (i = 0; i < src->num_columns; i++) {
+		if (src->columns[i].count > 0) {
+			focus(src->columns[i].clients[0]);
+			break;
+		}
+	}
+
+	arrange();
+	updateclientlist();
 }
 
-static void resize(Client *c, int x, int y, int w, int h) {
-    c->x = x; c->y = y; c->w = w; c->h = h;
-    XMoveResizeWindow(dpy, c->win, x, y, w - 2 * border_width, h - 2 * border_width);
+void
+nextwin(const Arg *arg)
+{
+	Workspace *ws;
+	Column *col;
+	int i, next;
+
+	if (!focused)
+		return;
+
+	ws = &workspaces[currentws];
+	col = &ws->columns[focused->column];
+
+	if (col->count <= 1)
+		return;
+
+	for (i = 0; i < col->count; i++) {
+		if (col->clients[i] == focused) {
+			next = (i + 1) % col->count;
+			focus(col->clients[next]);
+			return;
+		}
+	}
 }
 
-void arrange() {
-    if (!workspaces[current_ws]) return;
-    
-    for (Client *c = workspaces[current_ws]; c; c = c->next) {
-        if (c->isfullscreen) {
-            Monitor *m = get_monitor_for_window(c);
-            XSetWindowBorderWidth(dpy, c->win, 0);
-            resize(c, m->x, m->y, m->w, m->h);
-            XMapWindow(dpy, c->win);
-            XRaiseWindow(dpy, c->win);
-            for (Client *other = workspaces[current_ws]; other; other = other->next) {
-                if (other != c) {
-                    other->ishidden = 1;
-                    XUnmapWindow(dpy, other->win);
-                }
-            }
-            return;
-        }
-    }
-    
-    for (Client *c = workspaces[current_ws]; c; c = c->next) {
-        c->ishidden = 0;
-        XSetWindowBorderWidth(dpy, c->win, border_width);
-        XMapWindow(dpy, c->win);
-    }
-    
-    if (current_monitor) {
-        arrange_monitor(current_monitor);
-    }
-    
-    for (Monitor *mon = monitors; mon; mon = mon->next) {
-        if (mon != current_monitor) {
-            arrange_monitor(mon);
-        }
-    }
+void
+prevwin(const Arg *arg)
+{
+	Workspace *ws;
+	Column *col;
+	int i, prev;
 
-    for (Client *c = workspaces[current_ws]; c; c = c->next)
-        if (c->isfloating) XRaiseWindow(dpy, c->win);
-    if (focused) XRaiseWindow(dpy, focused->win);
+	if (!focused)
+		return;
+
+	ws = &workspaces[currentws];
+	col = &ws->columns[focused->column];
+
+	if (col->count <= 1)
+		return;
+
+	for (i = 0; i < col->count; i++) {
+		if (col->clients[i] == focused) {
+			prev = (i - 1 + col->count) % col->count;
+			focus(col->clients[prev]);
+			return;
+		}
+	}
 }
 
-static void arrange_monitor(Monitor *mon) {
-    int x0 = mon->x + global_strut_left + padding;
-    int y0 = mon->y + global_strut_top + padding;
-    int usable_w = mon->w - global_strut_left - global_strut_right - 2 * padding;
-    int usable_h = mon->h - global_strut_top - global_strut_bottom - 2 * padding;
+void
+propertynotify(XEvent *e)
+{
+	StrutWindow *sw;
 
-    int n = 0;
-    for (Client *c = workspaces[current_ws]; c; c = c->next) {
-        if (!c->isfloating && get_monitor_for_window(c) == mon) n++;
-    }
-
-    if (n == 0) return;
-
-    if (n == 1) {
-        for (Client *c = workspaces[current_ws]; c; c = c->next) {
-            if (!c->isfloating && get_monitor_for_window(c) == mon) {
-                resize(c, x0, y0, usable_w, usable_h);
-                XMapWindow(dpy, c->win);
-                break;
-            }
-        }
-    } else if (n >= 2) {
-        int mw = (int)(usable_w * master_size);
-        int stack_w = usable_w - mw - padding;
-
-        Client *master = NULL;
-        for (Client *c = workspaces[current_ws]; c; c = c->next) {
-            if (!c->isfloating && get_monitor_for_window(c) == mon) {
-                master = c;
-                break;
-            }
-        }
-        
-        if (master) {
-            resize(master, x0 + usable_w - mw, y0, mw, usable_h);
-            XMapWindow(dpy, master->win);
-        }
-
-        int stack_count = n - 1;
-        if (stack_count > 0) {
-            int th = usable_h / stack_count;
-            int y = y0;
-            int stacked = 0;
-            for (Client *c = workspaces[current_ws]; c; c = c->next) {
-                if (c->isfloating || c == master || get_monitor_for_window(c) != mon) continue;
-                stacked++;
-                int h = (stacked < stack_count) ? th : (usable_h - (y - y0));
-                if (h < min_window_size) h = min_window_size;
-                resize(c, x0, y, stack_w, h);
-                XMapWindow(dpy, c->win);
-                y += h + padding;
-            }
-        }
-    }
+	if (e->xproperty.atom == netatoms[6] ||
+	    e->xproperty.atom == netatoms[7]) {
+		for (sw = strutwindows; sw; sw = sw->next) {
+			if (sw->win == e->xproperty.window) {
+				if (getstruts(sw->win, sw->struts)) {
+					updatestruts();
+					arrange();
+				}
+				return;
+			}
+		}
+	}
 }
 
-static void scan(void) {
-    unsigned int i, num;
-    Window d1, d2, *wins = NULL;
-    XWindowAttributes wa;
-
-    if (XQueryTree(dpy, root, &d1, &d2, &wins, &num)) {
-        for (i = 0; i < num; i++) {
-            if (!XGetWindowAttributes(dpy, wins[i], &wa) || wa.override_redirect) 
-                continue;
-            if (wa.map_state == IsViewable) {
-                XEvent e = {.type = MapRequest, .xmaprequest.window = wins[i]};
-                maprequest(&e);
-            }
-        }
-        if (wins) XFree(wins);
-    }
+void
+quit(const Arg *arg)
+{
+	cleanup();
+	XCloseDisplay(dpy);
+	exit(0);
 }
 
-void killclient(const Arg *arg) {
-    if (focused) XKillClient(dpy, focused->win);
+void
+removeclient(Window win)
+{
+	Workspace *ws;
+	Client *c;
+	int wasfocused, i;
+
+	c = hashfind(win);
+	if (!c)
+		return;
+
+	wasfocused = (focused == c);
+	ws = &workspaces[c->workspace];
+
+	columnremove(ws, c);
+	hashremove(win);
+	XSelectInput(dpy, c->win, NoEventMask);
+	free(c);
+
+	if (wasfocused) {
+		focused = NULL;
+		for (i = 0; i < ws->num_columns; i++) {
+			if (ws->columns[i].count > 0) {
+				focus(ws->columns[i].clients[0]);
+				break;
+			}
+		}
+	}
+
+	arrange();
+	updateclientlist();
 }
 
-void togglemaster(const Arg *arg) {
-    if (!focused || !workspaces[current_ws] || focused == workspaces[current_ws])
-        return;
+void
+removestrutwin(Window win)
+{
+	StrutWindow *sw, **prev;
 
-    Client **prev = &workspaces[current_ws];
-    while (*prev && *prev != focused)
-        prev = &(*prev)->next;
-    if (*prev) {
-        *prev = focused->next;
-        focused->next = workspaces[current_ws];
-        workspaces[current_ws] = focused;
-    }
-    arrange();
+	prev = &strutwindows;
+	for (sw = strutwindows; sw; sw = sw->next) {
+		if (sw->win == win) {
+			*prev = sw->next;
+			free(sw);
+			updatestruts();
+			return;
+		}
+		prev = &sw->next;
+	}
 }
 
-void incmaster(const Arg *arg) {
-    master_size += 0.05;
-    if (master_size > 0.9) master_size = 0.9;
-    arrange();
+void
+resize(Client *c, int x, int y, int w, int h)
+{
+	c->x = x;
+	c->y = y;
+	c->w = w;
+	c->h = h;
+	XMoveResizeWindow(dpy, c->win, x, y,
+	    w - 2 * border_width, h - 2 * border_width);
 }
 
-void decmaster(const Arg *arg) {
-    master_size -= 0.05;
-    if (master_size < 0.1) master_size = 0.1;
-    arrange();
+void
+scan(void)
+{
+	XWindowAttributes wa;
+	XEvent e;
+	Window d1, d2, *wins;
+	unsigned int i, num;
+
+	wins = NULL;
+	if (XQueryTree(dpy, root, &d1, &d2, &wins, &num)) {
+		for (i = 0; i < num; i++) {
+			if (!XGetWindowAttributes(dpy, wins[i], &wa) ||
+			    wa.override_redirect)
+				continue;
+			if (wa.map_state == IsViewable) {
+				e.type = MapRequest;
+				e.xmaprequest.window = wins[i];
+				maprequest(&e);
+			}
+		}
+		if (wins)
+			XFree(wins);
+	}
 }
 
-static int can_focus(Client *c) {
-    if (!c || c->ishidden || c->workspace != current_ws) return 0;
-    XWindowAttributes wa;
-    return XGetWindowAttributes(dpy, c->win, &wa);
+void
+screenchange(XEvent *e)
+{
+	XRRUpdateConfiguration(e);
+	sw = DisplayWidth(dpy, screen);
+	sh = DisplayHeight(dpy, screen);
+	updatemonitors();
+	arrange();
 }
 
-void nextwin(const Arg *arg) {
-    if (!focused || !workspaces[current_ws]) return;
-    Client *next = focused->next;
-    while (next && !can_focus(next)) next = next->next;
-    if (next) focus(next);
-    else if (can_focus(workspaces[current_ws])) focus(workspaces[current_ws]);
+void
+setcolors(void)
+{
+	Colormap cmap;
+	XColor color;
+
+	cmap = DefaultColormap(dpy, screen);
+	XParseColor(dpy, cmap, col_border_normal, &color);
+	XAllocColor(dpy, cmap, &color);
+	bordernormal = color.pixel;
+	XParseColor(dpy, cmap, col_border_focused, &color);
+	XAllocColor(dpy, cmap, &color);
+	borderfocused = color.pixel;
 }
 
-void prevwin(const Arg *arg) {
-    if (!focused || !workspaces[current_ws]) return;
-    Client *prev = NULL, *last = workspaces[current_ws];
-    for (Client *c = workspaces[current_ws]; c; c = c->next) {
-        if (c->next == focused && can_focus(c)) prev = c;
-        if (c->next && can_focus(c->next)) last = c->next;
-    }
-    if (prev) focus(prev);
-    else if (can_focus(last)) focus(last);
+void
+setrootbg(void)
+{
+	Colormap cmap;
+	XColor color;
+
+	cmap = DefaultColormap(dpy, screen);
+	if (XParseColor(dpy, cmap, root_bg, &color) &&
+	    XAllocColor(dpy, cmap, &color)) {
+		XSetWindowBackground(dpy, root, color.pixel);
+		XClearWindow(dpy, root);
+	}
 }
 
-// static int get_stack_clients(Client *stack[], int max) {
-//     if (!workspaces[current_ws]) return 0;
-//     int n = 0;
-//     Client *c = workspaces[current_ws]->next;
-//     while (c && n < max) {
-//         stack[n++] = c;
-//         c = c->next;
-//     }
-//     return n;
-// }
+void
+setupatoms(void)
+{
+	wmatoms[0] = XInternAtom(dpy, "WM_PROTOCOLS", False);
+	wmatoms[1] = XInternAtom(dpy, "WM_DELETE_WINDOW", False);
+	wmatoms[2] = XInternAtom(dpy, "WM_STATE", False);
+	wmatoms[3] = XInternAtom(dpy, "WM_TAKE_FOCUS", False);
 
-static void move_in_stack(int delta) {
-    if (!focused || !workspaces[current_ws] || focused == workspaces[current_ws])
-        return;
-
-    Client *stack[max_stack_size];
-    int n = 0;
-    Client *c = workspaces[current_ws]->next;
-    while (c && n < max_stack_size) {
-        stack[n++] = c;
-        c = c->next;
-    }
-    if (n < 2) return;
-
-    int idx = -1;
-    for (int i = 0; i < n; i++) {
-        if (stack[i] == focused) {
-            idx = i;
-            break;
-        }
-    }
-    if (idx == -1) return;
-
-    int new_idx = idx + delta;
-    if (new_idx < 0 || new_idx >= n) return;
-
-    // swap
-    Client *tmp = stack[idx];
-    stack[idx] = stack[new_idx];
-    stack[new_idx] = tmp;
-
-    Client *cur = workspaces[current_ws];
-    for (int i = 0; i < n; i++) {
-        cur->next = stack[i];
-        cur = cur->next;
-    }
-    cur->next = NULL;
-    arrange();
+	netatoms[0] = XInternAtom(dpy, "_NET_ACTIVE_WINDOW", False);
+	netatoms[1] = XInternAtom(dpy, "_NET_CURRENT_DESKTOP", False);
+	netatoms[2] = XInternAtom(dpy, "_NET_NUMBER_OF_DESKTOPS", False);
+	netatoms[3] = XInternAtom(dpy, "_NET_DESKTOP_NAMES", False);
+	netatoms[4] = XInternAtom(dpy, "_NET_CLIENT_LIST", False);
+	netatoms[5] = XInternAtom(dpy, "_NET_WM_STATE_FULLSCREEN", False);
+	netatoms[6] = XInternAtom(dpy, "_NET_WM_STRUT", False);
+	netatoms[7] = XInternAtom(dpy, "_NET_WM_STRUT_PARTIAL", False);
+	netatoms[8] = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", False);
 }
 
-void movewin(const Arg *arg) { move_in_stack(arg->i); }
-
-static void switchws(const Arg *arg) {
-    int ws = arg->i;
-    if (ws < 0 || ws >= 9 || ws == current_ws) return;
-    int old_ws = current_ws;
-    current_ws = ws;
-    
-    for (Client *c = workspaces[old_ws]; c; c = c->next) {
-        c->ishidden = 1;
-        XUnmapWindow(dpy, c->win);
-    }
-    
-    for (Client *c = workspaces[current_ws]; c; c = c->next) {
-        c->ishidden = 0;
-        XMapWindow(dpy, c->win);
-        XSetWindowBorder(dpy, c->win, border_normal);
-    }
-
-    focused = last_focused[current_ws];
-    if (!focused || !can_focus(focused)) focused = workspaces[current_ws];
-    if (focused) focus(focused);
-    arrange();
+void
+spawn(const Arg *arg)
+{
+	if (fork() == 0) {
+		if (dpy)
+			close(ConnectionNumber(dpy));
+		setsid();
+		execl("/bin/sh", "sh", "-c", arg->cmd, (char *)NULL);
+		fprintf(stderr, "eowm: exec failed\n");
+		exit(1);
+	}
 }
 
-static void movewin_to_ws(const Arg *arg) {
-    int ws = arg->i;
-    if (!focused || ws < 0 || ws >= 9 || ws == current_ws) return;
-    Client *moving = focused;
-    
-    Client **prev;
-    for (prev = &workspaces[current_ws]; *prev; prev = &(*prev)->next) {
-        if (*prev == moving) {
-            *prev = moving->next;
-            break;
-        }
-    }
-    
-    moving->workspace = ws;
-    moving->next = workspaces[ws];
-    moving->ishidden = 0;
-    workspaces[ws] = moving;
-    moving->isfullscreen = 0;
-    XUnmapWindow(dpy, moving->win);
-    
-    focused = workspaces[current_ws];
-    if (focused) focus(focused);
-    arrange();
+void
+switchws(const Arg *arg)
+{
+	Workspace *old, *new;
+	int ws, i, j;
+
+	ws = arg->i;
+	if (ws < 0 || ws >= 9 || ws == currentws)
+		return;
+
+	old = &workspaces[currentws];
+	currentws = ws;
+
+	for (i = 0; i < old->num_columns; i++) {
+		for (j = 0; j < old->columns[i].count; j++) {
+			old->columns[i].clients[j]->ishidden = 1;
+			XUnmapWindow(dpy, old->columns[i].clients[j]->win);
+		}
+	}
+
+	new = &workspaces[currentws];
+	for (i = 0; i < new->num_columns; i++) {
+		for (j = 0; j < new->columns[i].count; j++) {
+			new->columns[i].clients[j]->ishidden = 0;
+			XMapWindow(dpy, new->columns[i].clients[j]->win);
+			XSetWindowBorder(dpy, new->columns[i].clients[j]->win,
+			    bordernormal);
+		}
+	}
+
+	focused = NULL;
+	for (i = 0; i < new->num_columns; i++) {
+		if (new->columns[i].count > 0) {
+			focus(new->columns[i].clients[0]);
+			break;
+		}
+	}
+
+	arrange();
+	updateewmh();
 }
 
-void fullscreen(const Arg *arg) {
-    if (!focused) return;
-    if (focused->isfullscreen) {
-        focused->isfullscreen = 0;
-        XSetWindowBorderWidth(dpy, focused->win, border_width);
-        XSetWindowBorder(dpy, focused->win, border_focused);
-        for (Client *c = workspaces[current_ws]; c; c = c->next) {
-            c->ishidden = 0;
-            XMapWindow(dpy, c->win);
-        }
-        focus(focused);
-        arrange();
-    } else {
-        focused->isfullscreen = 1;
-        arrange();
-    }
+void
+unmapnotify(XEvent *e)
+{
+	XUnmapEvent *ev;
+	StrutWindow *sw;
+	Client *c;
+
+	ev = &e->xunmap;
+	if (ev->send_event)
+		return;
+
+	for (sw = strutwindows; sw; sw = sw->next) {
+		if (sw->win == ev->window) {
+			removestrutwin(ev->window);
+			arrange();
+			return;
+		}
+	}
+
+	c = hashfind(ev->window);
+	if (!c || c->ishidden || c->workspace != currentws)
+		return;
+
+	removeclient(ev->window);
 }
 
-static void cleanup() {
-    for (int i = 0; i < 9; i++) {
-        Client *c = workspaces[i];
-        while (c) {
-            Client *next = c->next;
-            free(c);
-            c = next;
-        }
-    }
-    while (strut_windows) {
-        StrutWindow *next = strut_windows->next;
-        free(strut_windows);
-        strut_windows = next;
-    }
+void
+updateclientlist(void)
+{
+	Workspace *ws;
+	Window *wins;
+	int i, j, k, count, idx;
+
+	wins = NULL;
+	count = 0;
+
+	for (i = 0; i < 9; i++) {
+		ws = &workspaces[i];
+		for (j = 0; j < ws->num_columns; j++)
+			count += ws->columns[j].count;
+	}
+
+	if (count > 0) {
+		wins = malloc(count * sizeof(Window));
+		idx = 0;
+		for (i = 0; i < 9; i++) {
+			ws = &workspaces[i];
+			for (j = 0; j < ws->num_columns; j++) {
+				for (k = 0; k < ws->columns[j].count; k++)
+					wins[idx++] = ws->columns[j].clients[k]->win;
+			}
+		}
+	}
+
+	XChangeProperty(dpy, root, netatoms[4], XA_WINDOW, 32,
+	    PropModeReplace, (unsigned char *)wins, count);
+	if (wins)
+		free(wins);
 }
 
-void quit(const Arg *arg) {
-    cleanup();
-    XCloseDisplay(dpy);
-    exit(0);
+void
+updateewmh(void)
+{
+	long data;
+	char names[] = "1\0002\0003\0004\0005\0006\0007\0008\0009";
+
+	data = currentws;
+	XChangeProperty(dpy, root, netatoms[1], XA_CARDINAL, 32,
+	    PropModeReplace, (unsigned char *)&data, 1);
+	data = 9;
+	XChangeProperty(dpy, root, netatoms[2], XA_CARDINAL, 32,
+	    PropModeReplace, (unsigned char *)&data, 1);
+
+	XChangeProperty(dpy, root, netatoms[3],
+	    XInternAtom(dpy, "UTF8_STRING", False), 8,
+	    PropModeReplace, (unsigned char *)names, sizeof(names) - 1);
+
+	if (focused) {
+		XChangeProperty(dpy, root, netatoms[0], XA_WINDOW, 32,
+		    PropModeReplace, (unsigned char *)&focused->win, 1);
+	}
 }
 
-void spawn(const Arg *arg) {
-    if (fork() == 0) {
-        if (dpy) close(ConnectionNumber(dpy));
-        setsid();
-        execl("/bin/sh", "sh", "-c", arg->cmd, (char *)NULL);
-        fprintf(stderr, "Exec failed\n");
-        exit(1);
-    }
+Monitor *
+updatemonitors(void)
+{
+	XRRScreenResources *sr;
+	XRRCrtcInfo *ci;
+	Monitor *m, *mon;
+	int i;
+
+	while (monitors) {
+		m = monitors->next;
+		free(monitors);
+		monitors = m;
+	}
+	monitors = NULL;
+	currentmon = NULL;
+	moncount = 0;
+
+	sr = XRRGetScreenResources(dpy, root);
+	if (!sr)
+		goto fallback;
+
+	for (i = 0; i < sr->ncrtc; i++) {
+		ci = XRRGetCrtcInfo(dpy, sr, sr->crtcs[i]);
+		if (!ci || ci->noutput == 0 || ci->width == 0 || ci->height == 0) {
+			if (ci)
+				XRRFreeCrtcInfo(ci);
+			continue;
+		}
+
+		mon = calloc(1, sizeof(Monitor));
+		mon->num = moncount++;
+		mon->x = ci->x;
+		mon->y = ci->y;
+		mon->w = ci->width;
+		mon->h = ci->height;
+		mon->next = monitors;
+		monitors = mon;
+
+		XRRFreeCrtcInfo(ci);
+	}
+	XRRFreeScreenResources(sr);
+
+fallback:
+	if (!monitors) {
+		monitors = calloc(1, sizeof(Monitor));
+		monitors->x = 0;
+		monitors->y = 0;
+		monitors->w = sw;
+		monitors->h = sh;
+		monitors->num = 0;
+		moncount = 1;
+	}
+	currentmon = monitors;
+	return monitors;
+}
+
+void
+updatestruts(void)
+{
+	StrutWindow *sw;
+
+	strutleft = strutright = struttop = strutbottom = 0;
+	for (sw = strutwindows; sw; sw = sw->next) {
+		if (sw->struts[0] > strutleft)
+			strutleft = sw->struts[0];
+		if (sw->struts[1] > strutright)
+			strutright = sw->struts[1];
+		if (sw->struts[2] > struttop)
+			struttop = sw->struts[2];
+		if (sw->struts[3] > strutbottom)
+			strutbottom = sw->struts[3];
+	}
+}
+
+Monitor *
+getat(int x, int y)
+{
+	Monitor *m;
+
+	for (m = monitors; m; m = m->next)
+		if (x >= m->x && x < m->x + m->w &&
+		    y >= m->y && y < m->y + m->h)
+			return m;
+	return monitors;
+}
+
+Monitor *
+getforwin(Client *c)
+{
+	return getat(c->x + c->w / 2, c->y + c->h / 2);
+}
+
+int
+getstruts(Window win, long struts[4])
+{
+	Atom types[] = {netatoms[7], netatoms[6]};
+	Atom actual;
+	unsigned long n, after;
+	unsigned char *data;
+	long *vals;
+	int fmt, t, i, hasstruts;
+
+	data = NULL;
+	for (t = 0; t < 2; t++) {
+		if (XGetWindowProperty(dpy, win, types[t], 0, 4, False,
+		    XA_CARDINAL, &actual, &fmt, &n, &after, &data) == Success) {
+			if (actual == XA_CARDINAL && fmt == 32 && n >= 4) {
+				vals = (long *)data;
+				hasstruts = 0;
+				for (i = 0; i < 4; i++) {
+					struts[i] = vals[i];
+					if (vals[i] > 0)
+						hasstruts = 1;
+				}
+				XFree(data);
+				return hasstruts;
+			}
+			if (data)
+				XFree(data);
+		}
+	}
+	return 0;
+}
+
+int
+wintype(Window win, const char *type_name)
+{
+	Atom actual, type, check;
+	unsigned long n, after;
+	unsigned char *prop;
+	int fmt;
+
+	prop = NULL;
+	if (XGetWindowProperty(dpy, win, netatoms[8], 0, 1, False, XA_ATOM,
+	    &actual, &fmt, &n, &after, &prop) == Success && prop) {
+		type = *(Atom *)prop;
+		check = XInternAtom(dpy, type_name, False);
+		XFree(prop);
+		return type == check;
+	}
+	return 0;
+}
+
+static void
+sigchld(int sig)
+{
+	(void)sig;
+	while (waitpid(-1, NULL, WNOHANG) > 0)
+		;
+}
+
+static int
+xerror(Display *dpy, XErrorEvent *ee)
+{
+	char msg[256];
+
+	XGetErrorText(dpy, ee->error_code, msg, sizeof(msg));
+	fprintf(stderr, "eowm: X error: %s\n", msg);
+	return 0;
+}
+
+int
+main(int argc, char *argv[])
+{
+	XEvent ev;
+	Cursor cursor;
+	KeyCode code;
+	size_t i;
+
+	if (argc == 2 && !strcmp("-v", argv[1]))
+		die("eowm v" VERSION);
+	else if (argc != 1)
+		die("usage: eowm [-v]");
+	if (!getenv("DISPLAY"))
+		die("DISPLAY not set");
+	if (!(dpy = XOpenDisplay(NULL)))
+		die("cannot open display");
+
+	XSetErrorHandler(xerror);
+	signal(SIGCHLD, sigchld);
+
+	screen = DefaultScreen(dpy);
+	root = RootWindow(dpy, screen);
+	cursor = XCreateFontCursor(dpy, XC_left_ptr);
+	XDefineCursor(dpy, root, cursor);
+	sw = DisplayWidth(dpy, screen);
+	sh = DisplayHeight(dpy, screen);
+
+	setcolors();
+	setrootbg();
+	setupatoms();
+	initworkspaces();
+	updatemonitors();
+	updateewmh();
+
+	if (!currentmon && monitors)
+		currentmon = monitors;
+
+	XRRSelectInput(dpy, root, RRScreenChangeNotifyMask);
+	XSelectInput(dpy, root, SubstructureRedirectMask |
+	    SubstructureNotifyMask | PropertyChangeMask | StructureNotifyMask);
+
+	for (i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
+		code = XKeysymToKeycode(dpy, keys[i].keysym);
+		XGrabKey(dpy, code, keys[i].mod, root, True,
+		    GrabModeAsync, GrabModeAsync);
+	}
+
+	scan();
+	while (1) {
+		XNextEvent(dpy, &ev);
+		if (handler[ev.type])
+			handler[ev.type](&ev);
+	}
 }

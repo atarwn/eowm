@@ -1,7 +1,7 @@
-dev -> "Technetium"
+2.0 -> ""
 -------------------
- * XRandR for multiple monitors!
- * Still under 1000 LOC
+ * Dynamic columns
+ * XRandR for multiple monitors
 
 1.4 -> "Evolutionize"
 ---------------------
