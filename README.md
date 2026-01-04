@@ -4,79 +4,77 @@
 `┗ ┗┛┗┻┛┛┗┗`
 ============
 
-This is a simple window manager that continues and develops the idea of catwm for learning purposes.
+**eowm** (eet owter winvow manader) is a lightweight, dynamic tiling window manager for X11. While it started as a clone of catwm, version 2.0 introduces a unique column-based tiling engine designed for flexibility and efficiency.
 
->[!NOTE]
->My Reddit account was unfairly suspended :(  
->I would like to continue sharing my projects and updates, but the doors to the largest social network with real people and targeted audience are closed to me...
+Key Features
+------------
+* **Dynamic Column Layout:** Organize windows into multiple columns.
+* **Multi-Monitor Support:** Seamlessly handle multiple screens via XRandR.
+* **EWMH Compliance:** Works with modern bars and docks (supports struts).
+* **High Performance:** Uses a hash table for O(1) client lookups.
 
 Keybinds
--------
+--------
 
-Mod - Mod1Mask (Alt)
-You can replace it with Mod4Mask (Win)
+**Mod** - Mod1Mask (Alt). You can change this to Mod4Mask (Win) in `config.h`.
 
-|      Keybind      | Action |
-|-------------------|--------|
-| Mod + j/k         | next/prev window |
-| Mod + f           | fullscreen |
-| Mod + q           | kill window |
-| Mod + c           | quit |
-| Mod + Shift + j/k | move down/up focused window in stack |
-| Mod + h/l         | inc/dec master |
-| Mod + Space       | toggle master with top stack |
-| Mod + Return      | spawn alacritty |
-| Mod + p           | spawn dmenu\_run |
-| Mod + 1-9         | Switch workspaces |
-| Mod + Shift + 1-9 | Switch window between workspaces |
-| Mouse hover       | focus |
+| Keybind | Action |
+|---------|--------|
+| `Mod + j/k` | Focus next/previous window in column |
+| `Mod + h/l` | Focus left/right column |
+| `Mod + Shift + h/l` | Move focused window to left/right column |
+| `Mod + Ctrl + h/l` | Focus next/previous monitor |
+| `Mod + Ctrl + Shift + h/l` | Move focused window to next/previous monitor |
+| `Mod + f` | Toggle fullscreen |
+| `Mod + q` | Kill focused window |
+| `Mod + Shift + c` | Quit eowm |
+| `Mod + Return` | Spawn Alacritty |
+| `Mod + p` | Spawn dmenu_run |
+| `Mod + 1-9` | Switch workspaces |
+| `Mod + Shift + 1-9` | Move window to workspace |
+| `Mouse hover` | Focus window (Sloppy focus) |
 
+Layout: Dynamic Columns
+-----------------------
 
-Layout
-------
+Unlike the traditional Master/Stack layout, **eowm** treats the screen as a series of columns.
 
 ```
- ____ ______________
-|    |              |
-|____|              |
-|    |    Master    |
-|____|              |
-|    |              |
-|____|______________|
+ ______ ______ ______
+|      |      |      |
+|      |      |______|
+|______|      |      |
+|      |      |______|
+|      |      |      |
+|______|______|______|
 ```
 
-borders and padding, but still no UI  
-new window pushes master to the top of the stack
+* Each workspace supports up to 16 columns.
+* Windows within a column share height equally.
+* Empty columns are automatically compacted to reclaim space.
+* Fullscreen mode hides all other windows for total focus.
 
+Installation
+------------
 
-Screenshots
------------
-![Normal](assets/demo1.png)
-![Single window](assets/demo2.png)
-![Fullscreen](assets/demo3.png)
+```bash
+# Edit config.h to suit your needs
+make
+sudo make install
 
-Naming
-------
+```
 
-it was vewy hard:
- * catwm - origin
- * kittywm - stupid
- * meowm - two m's
- * eowm - hmm, ok
+## Naming
 
-And you also stumbled upon the expanded form of the name, which I spent one brain cell on
+The evolution of the name:
 
+* **catwm** - The origin
+* **kittywm** - Too silly
+* **meowm** - Too many M's
+* **eowm** - Just right. "eet owter winvow manader" (v2.0) 
 
-Why?!
------
+## Thanks to
 
-fredom
-
-
-Thanks to:
-==========
-
- * [catwm](https://github.com/pyknite/catwm) - inspiration
- * [tinywm](https://github.com/mackstann/tinywm) - basic knowledge
- * [dwm](https://git.suckless.org/dwm) - everything
- * [sowm](https://github.com/dylanaraps/sowm) - links to other WMs sources 
+* [catwm](https://github.com/pyknite/catwm) - Original inspiration
+* [dwm](https://git.suckless.org/dwm) - For the best C patterns and X11 logic
+* [tinywm](https://github.com/mackstann/tinywm) - Helping understand the basics
