@@ -1,3 +1,13 @@
+> [!CAUTION]
+> I don't want to support this project anymore.
+> 
+> This project helped me learn a lot about X11 and low-level window management,
+> but maintaining an event-driven, global-state-heavy codebase in C is not something
+> I want to continue doing.
+> 
+> There will be no further development or support.
+
+
 <img src="assets/logo.svg" alt="eowm" align="right" width="150"/>
 
 `┏┓┏┓┓┏┏┏┳┓`  
