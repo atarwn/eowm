@@ -6,6 +6,8 @@
 > I want to continue doing.
 > 
 > There will be no further development or support.
+>
+> except for [gbwm](https://github.com/atarwn/gbwm)
 
 
 <img src="assets/logo.svg" alt="eowm" align="right" width="150"/>
@@ -15,10 +17,6 @@
 ============
 
 This is a simple window manager that continues and develops the idea of catwm for learning purposes.
-
->[!NOTE]
->My Reddit account was unfairly suspended :(  
->I would like to continue sharing my projects and updates, but the doors to the largest social network with real people and targeted audience are closed to me...
 
 Keybinds
 -------
