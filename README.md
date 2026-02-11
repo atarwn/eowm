@@ -6,8 +6,6 @@
 > I want to continue doing.
 > 
 > There will be no further development or support.
->
-> except for [gbwm](https://github.com/atarwn/gbwm)
 
 
 <img src="assets/logo.svg" alt="eowm" align="right" width="150"/>
