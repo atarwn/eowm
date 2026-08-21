@@ -67,7 +67,7 @@ Naming it was vewy hard:
 Why?!
 -----
 
-cuz i suck at programming
+cuz rewriting from scratch was easier than waiting for the PR, even tho i suck at programming
 
 
 Thanks to:

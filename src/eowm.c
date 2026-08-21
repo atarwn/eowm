@@ -359,8 +359,44 @@ static void buttonpress(XEvent *e) {
 
 static void configurerequest(XEvent *e) {
     XConfigureRequestEvent *ev = &e->xconfigurerequest;
-    XWindowChanges wc = {ev->x, ev->y, ev->width, ev->height, ev->border_width, ev->above, ev->detail};
-    XConfigureWindow(dpy, ev->window, ev->value_mask, &wc);
+    Client *c = NULL;
+
+    for (int i = 0; i < NUM_WS; i++) {
+        for (Client *curr = workspaces[i]; curr; curr = curr->next) {
+            if (curr->win == ev->window) {
+                c = curr;
+                break;
+            }
+        }
+        if (c) break;
+    }
+
+    if (c) {
+        int bw = c->isfullscreen ? 0 : border_width;
+        XConfigureEvent ce = {
+            .type = ConfigureNotify,
+            .display = dpy,
+            .event = c->win,
+            .window = c->win,
+            .x = c->x,
+            .y = c->y,
+            .width = c->w - 2 * bw,
+            .height = c->h - 2 * bw,
+            .border_width = bw,
+            .above = None,
+            .override_redirect = False
+        };
+        XSendEvent(dpy, c->win, False, StructureNotifyMask, (XEvent *)&ce);
+    } else {
+        XWindowChanges wc = {
+            .x = ev->x,
+            .y = ev->y,
+            .width = ev->width,
+            .height = ev->height,
+            .border_width = ev->border_width
+        };
+        XConfigureWindow(dpy, ev->window, ev->value_mask, &wc);
+    }
 }
 
 static void maprequest(XEvent *e) {
