@@ -18,4 +18,4 @@ uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/$(TARGET)
 
 clean:
-	rm -f $(TARGET) src/config.h
+	rm -f $(TARGET)
