@@ -1,11 +1,4 @@
-> [!CAUTION]
-> I don't want to support this project anymore.
-> 
-> This project helped me learn a lot about X11 and low-level window management,
-> but maintaining an event-driven, global-state-heavy codebase in C is not something
-> I want to continue doing.
-> 
-> There will be no further development or support.
+> There will be further development and support.
 
 
 <img src="assets/logo.svg" alt="eowm" align="right" width="150"/>
@@ -61,22 +54,20 @@ Screenshots
 ![Single window](assets/demo2.png)
 ![Fullscreen](assets/demo3.png)
 
-Naming
-------
+Name
+----
 
-it was vewy hard:
+Naming it was vewy hard:
  * catwm - origin
  * kittywm - stupid
  * meowm - two m's
- * eowm - hmm, ok
-
-And you also stumbled upon the expanded form of the name, which I spent one brain cell on
+ * eowm - hmm, sounds good
 
 
 Why?!
 -----
 
-fredom
+cuz i suck at programming
 
 
 Thanks to:
@@ -85,4 +76,4 @@ Thanks to:
  * [catwm](https://github.com/pyknite/catwm) - inspiration
  * [tinywm](https://github.com/mackstann/tinywm) - basic knowledge
  * [dwm](https://git.suckless.org/dwm) - everything
- * [sowm](https://github.com/dylanaraps/sowm) - links to other WMs sources 
+ * [sowm](https://github.com/dylanaraps/sowm) - base for [mewm](https://codeberg.org/qwaderton/mewm)

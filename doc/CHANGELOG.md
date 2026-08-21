@@ -1,7 +1,8 @@
-dev -> "Technetium"
+dev -> "Ranzor"
 -------------------
- * XRandR for multiple monitors!
- * Still under 1000 LOC
+ * XRandR for multiple monitors 
+ * Refactored to ~700 LOC (first 2026 upd!!)
+ * Fixed fullscreen padding
 
 1.4 -> "Evolutionize"
 ---------------------
